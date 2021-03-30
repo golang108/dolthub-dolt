@@ -221,14 +221,18 @@ func (dm dynamoManifest) SetAppendix(ctx context.Context, specs []tableSpec) err
 		return nil
 	}
 
-	tableInfo := make([]string, 2*len(specs))
-	formatSpecs(specs, tableInfo)
+	specStr := ""
+	if len(specs) > 0 {
+		tableInfo := make([]string, 2*len(specs))
+		formatSpecs(specs, tableInfo)
+		specStr = strings.Join(tableInfo, ":")
+	}
 
 	args := dynamodb.UpdateItemInput{
 		TableName:                aws.String(dm.table),
 		ExpressionAttributeNames: map[string]*string{updateExpressionNamesKey: aws.String(appendixAttr)},
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			updateExpressionValuesKey: {S: aws.String(strings.Join(tableInfo, ":"))},
+			updateExpressionValuesKey: {S: aws.String(specStr)},
 		},
 		Key:              map[string]*dynamodb.AttributeValue{dbAttr: {S: aws.String(dm.db)}},
 		UpdateExpression: aws.String(updateExpression),

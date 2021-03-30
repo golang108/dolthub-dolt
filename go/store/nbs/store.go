@@ -258,6 +258,32 @@ func (nbs *NomsBlockStore) UpdateManifest(ctx context.Context, updates map[hash.
 	return updatedContents, nil
 }
 
+func (nbs *NomsBlockStore) SetAppendix(ctx context.Context, updates map[hash.Hash]uint32) (err error) {
+	setter, ok := nbs.mm.m.(manifestAppendixUpdater)
+	if !ok {
+		return errors.New("manifest does not support appendix setting")
+	}
+
+	nbs.mm.LockForUpdate()
+	defer func() {
+		unlockErr := nbs.mm.UnlockForUpdate()
+
+		if err == nil {
+			err = unlockErr
+		}
+	}()
+
+	specs := make([]tableSpec, 0, len(updates))
+	for h, count := range updates {
+		specs = append(specs, tableSpec{addr(h), count})
+	}
+
+	nbs.mu.Lock()
+	defer nbs.mu.Unlock()
+
+	return setter.SetAppendix(ctx, specs)
+}
+
 func (nbs *NomsBlockStore) UpdateAppendix(ctx context.Context, updates map[hash.Hash]uint32) (mi ManifestInfo, err error) {
 	nbs.mm.LockForUpdate()
 	defer func() {
