@@ -48,7 +48,7 @@ service ChunkStoreService {
 
   rpc ListAppendixTableFiles(ListTableFilesRequest) returns (ListTableFilesResponse);
 
-  rpc AddAppendixTableFiles(AddTableFilesRequest) returns (AddTableFilesResponse);
+  rpc SetAppendix(AddTableFilesRequest) returns (AddTableFilesResponse);
 }
 
 message RepoId {
