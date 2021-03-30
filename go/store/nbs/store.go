@@ -224,6 +224,90 @@ func (nbs *NomsBlockStore) UpdateManifest(ctx context.Context, updates map[hash.
 		return contents, nil
 	}
 
+	// if the manifest has appendix specs we prepend them
+	// to the specs
+	var appendixSpecs []tableSpec
+	if contents.appendix != nil && len(contents.appendix) > 0 {
+		contents, appendixSpecs = contents.removeAppendixSpecs()
+
+		appendixPrepended := append([]tableSpec{}, appendixSpecs...)
+		contents.specs = append(appendixPrepended, contents.specs...)
+	}
+
+	var updatedContents manifestContents
+	updatedContents, err = nbs.mm.Update(ctx, contents.lock, contents, &stats, nil)
+
+	if err != nil {
+		return manifestContents{}, err
+	}
+
+	newTables, err := nbs.tables.Rebase(ctx, contents.specs, nbs.stats)
+
+	if err != nil {
+		return manifestContents{}, err
+	}
+
+	nbs.upstream = updatedContents
+	oldTables := nbs.tables
+	nbs.tables = newTables
+	err = oldTables.Close()
+	if err != nil {
+		return manifestContents{}, err
+	}
+
+	return updatedContents, nil
+}
+
+func (nbs *NomsBlockStore) UpdateAppendix(ctx context.Context, updates map[hash.Hash]uint32) (mi ManifestInfo, err error) {
+	nbs.mm.LockForUpdate()
+	defer func() {
+		unlockErr := nbs.mm.UnlockForUpdate()
+
+		if err == nil {
+			err = unlockErr
+		}
+	}()
+
+	nbs.mu.Lock()
+	defer nbs.mu.Unlock()
+
+	var stats Stats
+	var ok bool
+	var contents manifestContents
+	ok, contents, err = nbs.mm.Fetch(ctx, &stats)
+
+	if err != nil {
+		return manifestContents{}, err
+	} else if !ok {
+		contents = manifestContents{vers: nbs.upstream.vers}
+	}
+
+	currAppendixSpecs := contents.getAppendixSet()
+
+	toAdd := make([]tableSpec, 0)
+	var addCount int
+	for h, count := range updates {
+		a := addr(h)
+
+		if _, ok := currAppendixSpecs[a]; !ok {
+			addCount++
+			toAdd = append(toAdd, tableSpec{a, count})
+		}
+	}
+
+	if addCount == 0 {
+		return contents, nil
+	}
+
+	var appendixSpecs []tableSpec
+	contents, appendixSpecs = contents.removeAppendixSpecs()
+
+	newAppendixSpecs := append([]tableSpec{}, toAdd[:]...)
+	contents.appendix = append(newAppendixSpecs, appendixSpecs...)
+
+	specs := append([]tableSpec{}, toAdd[:]...)
+	contents.specs = append(specs, contents.specs...)
+
 	var updatedContents manifestContents
 	updatedContents, err = nbs.mm.Update(ctx, contents.lock, contents, &stats, nil)
 
@@ -890,6 +974,7 @@ func (nbs *NomsBlockStore) updateManifest(ctx context.Context, current, last has
 
 	if nbs.c.ConjoinRequired(nbs.tables) {
 		var err error
+
 		newUpstream, err := nbs.c.Conjoin(ctx, nbs.upstream, nbs.mm, nbs.p, nbs.stats)
 
 		if err != nil {

@@ -100,11 +100,12 @@ type ManifestInfo interface {
 }
 
 type manifestContents struct {
-	vers  string
-	lock  addr
-	root  hash.Hash
-	gcGen addr
-	specs []tableSpec
+	vers     string
+	lock     addr
+	root     hash.Hash
+	gcGen    addr
+	specs    []tableSpec
+	appendix []tableSpec
 }
 
 func (mc manifestContents) GetVersion() string {
@@ -127,6 +128,10 @@ func (mc manifestContents) NumTableSpecs() int {
 	return len(mc.specs)
 }
 
+func (mc manifestContents) NumAppendixSpecs() int {
+	return len(mc.appendix)
+}
+
 func (mc manifestContents) GetTableSpecInfo(i int) TableSpecInfo {
 	return mc.specs[i]
 }
@@ -135,9 +140,46 @@ func (mc manifestContents) getSpec(i int) tableSpec {
 	return mc.specs[i]
 }
 
+func (mc manifestContents) removeAppendixSpecs() (manifestContents, []tableSpec) {
+	if mc.appendix == nil || len(mc.appendix) == 0 {
+		return mc, nil
+	}
+
+	appendixSet := mc.getAppendixSet()
+	if appendixSet != nil && len(appendixSet) > 0 {
+		filtered := make([]tableSpec, 0)
+		removed := make([]tableSpec, 0)
+		for _, s := range mc.specs {
+			if _, ok := appendixSet[s.name]; ok {
+				removed = append(removed, s)
+			} else {
+				filtered = append(filtered, s)
+			}
+		}
+
+		return manifestContents{
+			vers:  mc.vers,
+			lock:  mc.lock,
+			root:  mc.root,
+			gcGen: mc.gcGen,
+			specs: filtered,
+		}, removed
+	}
+
+	return mc, nil
+}
+
 func (mc manifestContents) getSpecSet() (ss map[addr]struct{}) {
-	ss = make(map[addr]struct{}, len(mc.specs))
-	for _, ts := range mc.specs {
+	return toSpecSet(mc.specs)
+}
+
+func (mc manifestContents) getAppendixSet() (ss map[addr]struct{}) {
+	return toSpecSet(mc.appendix)
+}
+
+func toSpecSet(specs []tableSpec) (ss map[addr]struct{}) {
+	ss = make(map[addr]struct{}, len(specs))
+	for _, ts := range specs {
 		ss[ts.name] = struct{}{}
 	}
 	return ss
