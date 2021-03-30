@@ -258,33 +258,6 @@ func (nbs *NomsBlockStore) UpdateManifest(ctx context.Context, updates map[hash.
 	return updatedContents, nil
 }
 
-func (nbs *NomsBlockStore) SetAppendix(ctx context.Context, updates map[hash.Hash]uint32) (err error) {
-	setter, ok := nbs.mm.m.(manifestAppendixSetter)
-	if !ok {
-		return errors.New("manifest must be appendix setter to set appendix")
-	}
-
-	nbs.mm.LockForUpdate()
-	defer func() {
-		unlockErr := nbs.mm.UnlockForUpdate()
-
-		if err == nil {
-			err = unlockErr
-		}
-	}()
-
-	nbs.mu.Lock()
-	defer nbs.mu.Unlock()
-
-	specs := make([]tableSpec, 0)
-	for h, count := range updates {
-		a := addr(h)
-		specs = append(specs, tableSpec{a, count})
-	}
-
-	return setter.SetAppendix(ctx, specs)
-}
-
 func (nbs *NomsBlockStore) UpdateAppendix(ctx context.Context, updates map[hash.Hash]uint32) (mi ManifestInfo, err error) {
 	nbs.mm.LockForUpdate()
 	defer func() {
@@ -1124,6 +1097,53 @@ func (nbs *NomsBlockStore) Sources(ctx context.Context) (hash.Hash, []TableFile,
 	var tableFiles []TableFile
 	for i := 0; i < numSpecs; i++ {
 		info := contents.getSpec(i)
+		cs, ok := css[info.name]
+		if !ok {
+			return hash.Hash{}, nil, errors.New("manifest referenced table file for which there is no chunkSource.")
+		}
+		tf := tableFile{
+			info: info,
+			open: func(ctx context.Context) (io.ReadCloser, error) {
+				r, err := cs.reader(ctx)
+				if err != nil {
+					return nil, err
+				}
+
+				return ioutil.NopCloser(r), nil
+			},
+		}
+		tableFiles = append(tableFiles, tf)
+	}
+
+	return contents.GetRoot(), tableFiles, nil
+}
+
+// AppendixSources retrieves the current root hash, and a list of all the table files in the manifest appendix
+func (nbs *NomsBlockStore) AppendixSources(ctx context.Context) (hash.Hash, []TableFile, error) {
+	nbs.mu.Lock()
+	defer nbs.mu.Unlock()
+
+	stats := &Stats{}
+	exists, contents, err := nbs.mm.m.ParseIfExists(ctx, stats, nil)
+
+	if err != nil {
+		return hash.Hash{}, nil, err
+	}
+
+	if !exists {
+		return hash.Hash{}, nil, nil
+	}
+
+	css, err := nbs.chunkSourcesByAddr()
+	if err != nil {
+		return hash.Hash{}, nil, err
+	}
+
+	numSpecs := contents.NumAppendixSpecs()
+
+	var tableFiles []TableFile
+	for i := 0; i < numSpecs; i++ {
+		info := contents.getAppendixSpec(i)
 		cs, ok := css[info.name]
 		if !ok {
 			return hash.Hash{}, nil, errors.New("manifest referenced table file for which there is no chunkSource.")
