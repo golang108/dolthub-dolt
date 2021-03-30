@@ -89,6 +89,11 @@ type manifestGCGenUpdater interface {
 	UpdateGCGen(ctx context.Context, lastLock addr, newContents manifestContents, stats *Stats, writeHook func() error) (manifestContents, error)
 }
 
+type manifestAppendixSetter interface {
+	// SetAppendix sets the appendix specs of a manifest
+	SetAppendix(ctx context.Context, specs []tableSpec) error
+}
+
 // ManifestInfo is an interface for retrieving data from a manifest outside of this package
 type ManifestInfo interface {
 	GetVersion() string

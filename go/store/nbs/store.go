@@ -258,6 +258,33 @@ func (nbs *NomsBlockStore) UpdateManifest(ctx context.Context, updates map[hash.
 	return updatedContents, nil
 }
 
+func (nbs *NomsBlockStore) SetAppendix(ctx context.Context, updates map[hash.Hash]uint32) (err error) {
+	setter, ok := nbs.mm.m.(manifestAppendixSetter)
+	if !ok {
+		return errors.New("manifest must be appendix setter to set appendix")
+	}
+
+	nbs.mm.LockForUpdate()
+	defer func() {
+		unlockErr := nbs.mm.UnlockForUpdate()
+
+		if err == nil {
+			err = unlockErr
+		}
+	}()
+
+	nbs.mu.Lock()
+	defer nbs.mu.Unlock()
+
+	specs := make([]tableSpec, 0)
+	for h, count := range updates {
+		a := addr(h)
+		specs = append(specs, tableSpec{a, count})
+	}
+
+	return setter.SetAppendix(ctx, specs)
+}
+
 func (nbs *NomsBlockStore) UpdateAppendix(ctx context.Context, updates map[hash.Hash]uint32) (mi ManifestInfo, err error) {
 	nbs.mm.LockForUpdate()
 	defer func() {
@@ -314,13 +341,10 @@ func (nbs *NomsBlockStore) UpdateAppendix(ctx context.Context, updates map[hash.
 	if err != nil {
 		return manifestContents{}, err
 	}
-
 	newTables, err := nbs.tables.Rebase(ctx, contents.specs, nbs.stats)
-
 	if err != nil {
 		return manifestContents{}, err
 	}
-
 	nbs.upstream = updatedContents
 	oldTables := nbs.tables
 	nbs.tables = newTables
@@ -328,7 +352,6 @@ func (nbs *NomsBlockStore) UpdateAppendix(ctx context.Context, updates map[hash.
 	if err != nil {
 		return manifestContents{}, err
 	}
-
 	return updatedContents, nil
 }
 
