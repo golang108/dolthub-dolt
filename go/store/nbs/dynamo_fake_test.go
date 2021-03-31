@@ -23,7 +23,6 @@ package nbs
 
 import (
 	"bytes"
-	"errors"
 	"sync/atomic"
 	"testing"
 
@@ -99,19 +98,6 @@ func (m *fakeDDB) putRecord(k string, l, r []byte, v string, s string, a string)
 	m.data[k] = record{l, r, v, s, a}
 }
 
-func (m *fakeDDB) updateRecord(k string, a string) error {
-	r, ok := m.data[k]
-	if !ok {
-		return errors.New("no record found to update")
-	}
-	recSt, recOk := r.(record)
-	if !recOk {
-		return errors.New("can only update records")
-	}
-	m.data[k] = record{recSt.lock, recSt.root, recSt.vers, recSt.specs, a}
-	return nil
-}
-
 func (m *fakeDDB) putData(k string, d []byte) {
 	m.data[k] = d
 }
@@ -168,30 +154,6 @@ func (m *fakeDDB) PutItemWithContext(ctx aws.Context, input *dynamodb.PutItemInp
 
 	atomic.AddInt64(&m.numPuts, 1)
 	return &dynamodb.PutItemOutput{}, nil
-}
-
-func (m *fakeDDB) UpdateItemWithContext(ctx aws.Context, input *dynamodb.UpdateItemInput, opts ...request.Option) (*dynamodb.UpdateItemOutput, error) {
-	assert.NotNil(m.t, input.Key[dbAttr], "%s should have been present", dbAttr)
-	assert.NotNil(m.t, input.Key[dbAttr].S, "key should have been a String: %+v", input.Key[dbAttr])
-
-	key := *input.Key[dbAttr].S
-
-	assert.NotNil(m.t, input.ExpressionAttributeNames, "ExpressionAttributesNames should have been present")
-	assert.NotNil(m.t, input.ExpressionAttributeNames[updateExpressionNamesKey], "%s should have been present", updateExpressionNamesKey)
-	assert.Equal(m.t, *input.ExpressionAttributeNames[updateExpressionNamesKey], appendixAttr)
-
-	assert.NotNil(m.t, input.ExpressionAttributeValues, "ExpressionAttributesValues should have been present")
-	assert.NotNil(m.t, input.ExpressionAttributeValues[updateExpressionValuesKey], "%s should have been present", updateExpressionValuesKey)
-	assert.NotNil(m.t, input.UpdateExpression, "%s should have been present", updateExpressionValuesKey)
-	assert.NotNil(m.t, input.ExpressionAttributeValues[updateExpressionValuesKey].S, "value should have been a String: %+v", input.ExpressionAttributeValues[updateExpressionValuesKey])
-	app := *input.ExpressionAttributeValues[updateExpressionValuesKey].S
-
-	err := m.updateRecord(key, app)
-	if err != nil {
-		return nil, err
-	}
-
-	return &dynamodb.UpdateItemOutput{}, nil
 }
 
 func checkCondition(current record, expressionAttrVals map[string]*dynamodb.AttributeValue) bool {

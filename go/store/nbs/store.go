@@ -224,14 +224,12 @@ func (nbs *NomsBlockStore) UpdateManifest(ctx context.Context, updates map[hash.
 		return contents, nil
 	}
 
-	// if the manifest has appendix specs we prepend them
-	// to the specs
-	var appendixSpecs []tableSpec
+	// ensure we dont drop existing appendices
 	if contents.appendix != nil && len(contents.appendix) > 0 {
-		contents, appendixSpecs = contents.removeAppendixSpecs()
-
-		appendixPrepended := append([]tableSpec{}, appendixSpecs...)
-		contents.specs = append(appendixPrepended, contents.specs...)
+		contents, err = fromManifestAppendixOptionNewContents(contents, contents.appendix, ManifestAppendixOption_ReplaceAll)
+		if err != nil {
+			return manifestContents{}, err
+		}
 	}
 
 	var updatedContents manifestContents
@@ -258,33 +256,7 @@ func (nbs *NomsBlockStore) UpdateManifest(ctx context.Context, updates map[hash.
 	return updatedContents, nil
 }
 
-func (nbs *NomsBlockStore) SetAppendix(ctx context.Context, updates map[hash.Hash]uint32) (err error) {
-	setter, ok := nbs.mm.m.(manifestAppendixUpdater)
-	if !ok {
-		return errors.New("manifest does not support appendix setting")
-	}
-
-	nbs.mm.LockForUpdate()
-	defer func() {
-		unlockErr := nbs.mm.UnlockForUpdate()
-
-		if err == nil {
-			err = unlockErr
-		}
-	}()
-
-	specs := make([]tableSpec, 0, len(updates))
-	for h, count := range updates {
-		specs = append(specs, tableSpec{addr(h), count})
-	}
-
-	nbs.mu.Lock()
-	defer nbs.mu.Unlock()
-
-	return setter.SetAppendix(ctx, specs)
-}
-
-func (nbs *NomsBlockStore) UpdateAppendix(ctx context.Context, updates map[hash.Hash]uint32) (mi ManifestInfo, err error) {
+func (nbs *NomsBlockStore) UpdateManifestWithAppendix(ctx context.Context, updates map[hash.Hash]uint32, option ManifestAppendixOption) (mi ManifestInfo, err error) {
 	nbs.mm.LockForUpdate()
 	defer func() {
 		unlockErr := nbs.mm.UnlockForUpdate()
@@ -325,25 +297,22 @@ func (nbs *NomsBlockStore) UpdateAppendix(ctx context.Context, updates map[hash.
 		return contents, nil
 	}
 
-	var appendixSpecs []tableSpec
-	contents, appendixSpecs = contents.removeAppendixSpecs()
-
-	newAppendixSpecs := append([]tableSpec{}, toAdd[:]...)
-	contents.appendix = append(newAppendixSpecs, appendixSpecs...)
-
-	specs := append([]tableSpec{}, toAdd[:]...)
-	contents.specs = append(specs, contents.specs...)
-
-	var updatedContents manifestContents
-	updatedContents, err = nbs.mm.Update(ctx, contents.lock, contents, &stats, nil)
-
+	contents, err = fromManifestAppendixOptionNewContents(contents, toAdd, option)
 	if err != nil {
 		return manifestContents{}, err
 	}
+
+	var updatedContents manifestContents
+	updatedContents, err = nbs.mm.Update(ctx, contents.lock, contents, &stats, nil)
+	if err != nil {
+		return manifestContents{}, err
+	}
+
 	newTables, err := nbs.tables.Rebase(ctx, contents.specs, nbs.stats)
 	if err != nil {
 		return manifestContents{}, err
 	}
+
 	nbs.upstream = updatedContents
 	oldTables := nbs.tables
 	nbs.tables = newTables
@@ -352,6 +321,37 @@ func (nbs *NomsBlockStore) UpdateAppendix(ctx context.Context, updates map[hash.
 		return manifestContents{}, err
 	}
 	return updatedContents, nil
+}
+
+func fromManifestAppendixOptionNewContents(upstream manifestContents, appendixSpecs []tableSpec, option ManifestAppendixOption) (manifestContents, error) {
+	contents, upstreamAppendixSpecs := upstream.removeAppendixSpecs()
+	switch option {
+	case ManifestAppendixOption_AppendOnly:
+		// prepend all appendix specs to contents.specs
+		specs := append([]tableSpec{}, appendixSpecs[:]...)
+		specs = append(specs, upstreamAppendixSpecs[:]...)
+		contents.specs = append(specs, contents.specs[:]...)
+
+		// append all appendix specs to contents.appendix
+		newAppendixSpecs := append([]tableSpec{}, upstreamAppendixSpecs[:]...)
+		contents.appendix = append(newAppendixSpecs, appendixSpecs...)
+
+		return contents, nil
+	case ManifestAppendixOption_ReplaceAll:
+		// prepend new appendix specs to contents.specs
+		// dropping all upstream appendix specs
+		specs := append([]tableSpec{}, appendixSpecs[:]...)
+		contents.specs = append(specs, contents.specs[:]...)
+
+		// append new appendix specs to contents.appendix
+		contents.appendix = append([]tableSpec{}, appendixSpecs...)
+		return contents, nil
+
+	case ManifestAppendixOption_SetNone:
+		return contents, nil
+	default:
+		return manifestContents{}, errors.New("unsupported manifest appendix option")
+	}
 }
 
 func NewAWSStoreWithMMapIndex(ctx context.Context, nbfVerStr string, table, ns, bucket string, s3 s3svc, ddb ddbsvc, memTableSize uint64) (*NomsBlockStore, error) {
@@ -1021,9 +1021,27 @@ func (nbs *NomsBlockStore) updateManifest(ctx context.Context, current, last has
 	}
 
 	specs, err := nbs.tables.ToSpecs()
-
 	if err != nil {
 		return err
+	}
+
+	// TODO test to make sure commits pickup appendixes
+	// ensure we dont drop appendices on commit
+	var appendixSpecs []tableSpec
+	if nbs.upstream.appendix != nil && len(nbs.upstream.appendix) > 0 {
+		appendixSet := nbs.upstream.getAppendixSet()
+
+		filtered := make([]tableSpec, 0, len(specs))
+		for _, s := range specs {
+			if _, present := appendixSet[s.name]; !present {
+				filtered = append(filtered, s)
+			}
+		}
+
+		_, appendixSpecs = nbs.upstream.removeAppendixSpecs()
+
+		prepended := append([]tableSpec{}, appendixSpecs[:]...)
+		specs = append(prepended, filtered[:]...)
 	}
 
 	newContents := manifestContents{
@@ -1032,6 +1050,7 @@ func (nbs *NomsBlockStore) updateManifest(ctx context.Context, current, last has
 		lock:  generateLockHash(current, specs),
 		gcGen: nbs.upstream.gcGen,
 		specs: specs,
+		appendix: appendixSpecs,
 	}
 
 	upstream, err := nbs.mm.Update(ctx, nbs.upstream.lock, newContents, nbs.stats, nil)

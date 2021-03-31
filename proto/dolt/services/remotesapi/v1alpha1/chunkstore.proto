@@ -45,10 +45,6 @@ service ChunkStoreService {
   rpc ListTableFiles(ListTableFilesRequest) returns (ListTableFilesResponse);
 
   rpc AddTableFiles(AddTableFilesRequest) returns (AddTableFilesResponse);
-
-  rpc ListAppendixTableFiles(ListTableFilesRequest) returns (ListTableFilesResponse);
-
-  rpc SetAppendix(AddTableFilesRequest) returns (AddTableFilesResponse);
 }
 
 message RepoId {
@@ -180,6 +176,7 @@ message ClientRepoFormat {
 
 message ListTableFilesRequest  {
   RepoId repo_id = 1;
+  bool appendix_only = 2;
 }
 
 message TableFileInfo {
@@ -193,10 +190,19 @@ message ListTableFilesResponse {
   repeated TableFileInfo table_file_info = 2;
 }
 
+enum ManifestAppendixOption {
+  UNSPECIFIED = 0;
+  APPEND_ONLY = 1;
+  REPLACE_ALL = 2;
+  SET_NONE = 3;
+}
+
 message AddTableFilesRequest {
   RepoId repo_id = 1;
   ClientRepoFormat client_repo_format = 2;
   repeated ChunkTableInfo chunk_table_info = 3;
+  bool appendix_only = 4;
+  ManifestAppendixOption appendix_option = 5;
 }
 
 message AddTableFilesResponse {

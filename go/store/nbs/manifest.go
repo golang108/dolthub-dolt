@@ -33,6 +33,7 @@ import (
 	"github.com/dolthub/dolt/go/store/hash"
 )
 
+
 var ErrCorruptManifest = errors.New("corrupt manifest")
 
 type manifest interface {
@@ -89,11 +90,6 @@ type manifestGCGenUpdater interface {
 	UpdateGCGen(ctx context.Context, lastLock addr, newContents manifestContents, stats *Stats, writeHook func() error) (manifestContents, error)
 }
 
-type manifestAppendixUpdater interface {
-	// SetAppendix sets the appendix specs of |manifestContents|
-	SetAppendix(ctx context.Context, specs []tableSpec) error
-}
-
 // ManifestInfo is an interface for retrieving data from a manifest outside of this package
 type ManifestInfo interface {
 	GetVersion() string
@@ -101,8 +97,19 @@ type ManifestInfo interface {
 	GetGCGen() string
 	GetRoot() hash.Hash
 	NumTableSpecs() int
+	NumAppendixSpecs() int
 	GetTableSpecInfo(i int) TableSpecInfo
+	GetAppendixTableSpecInfo(i int) TableSpecInfo
 }
+
+type ManifestAppendixOption int
+
+const (
+	ManifestAppendixOption_Unspecified ManifestAppendixOption = iota
+	ManifestAppendixOption_AppendOnly
+	ManifestAppendixOption_ReplaceAll
+	ManifestAppendixOption_SetNone
+)
 
 type manifestContents struct {
 	vers     string
@@ -139,6 +146,10 @@ func (mc manifestContents) NumAppendixSpecs() int {
 
 func (mc manifestContents) GetTableSpecInfo(i int) TableSpecInfo {
 	return mc.specs[i]
+}
+
+func (mc manifestContents) GetAppendixTableSpecInfo(i int) TableSpecInfo {
+	return mc.appendix[i]
 }
 
 func (mc manifestContents) getSpec(i int) tableSpec {

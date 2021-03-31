@@ -34,8 +34,6 @@ type ChunkStoreServiceClient interface {
 	Commit(ctx context.Context, in *CommitRequest, opts ...grpc.CallOption) (*CommitResponse, error)
 	ListTableFiles(ctx context.Context, in *ListTableFilesRequest, opts ...grpc.CallOption) (*ListTableFilesResponse, error)
 	AddTableFiles(ctx context.Context, in *AddTableFilesRequest, opts ...grpc.CallOption) (*AddTableFilesResponse, error)
-	ListAppendixTableFiles(ctx context.Context, in *ListTableFilesRequest, opts ...grpc.CallOption) (*ListTableFilesResponse, error)
-	SetAppendix(ctx context.Context, in *AddTableFilesRequest, opts ...grpc.CallOption) (*AddTableFilesResponse, error)
 }
 
 type chunkStoreServiceClient struct {
@@ -158,24 +156,6 @@ func (c *chunkStoreServiceClient) AddTableFiles(ctx context.Context, in *AddTabl
 	return out, nil
 }
 
-func (c *chunkStoreServiceClient) ListAppendixTableFiles(ctx context.Context, in *ListTableFilesRequest, opts ...grpc.CallOption) (*ListTableFilesResponse, error) {
-	out := new(ListTableFilesResponse)
-	err := c.cc.Invoke(ctx, "/dolt.services.remotesapi.v1alpha1.ChunkStoreService/ListAppendixTableFiles", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *chunkStoreServiceClient) SetAppendix(ctx context.Context, in *AddTableFilesRequest, opts ...grpc.CallOption) (*AddTableFilesResponse, error) {
-	out := new(AddTableFilesResponse)
-	err := c.cc.Invoke(ctx, "/dolt.services.remotesapi.v1alpha1.ChunkStoreService/SetAppendix", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // ChunkStoreServiceServer is the server API for ChunkStoreService service.
 // All implementations must embed UnimplementedChunkStoreServiceServer
 // for forward compatibility
@@ -197,8 +177,6 @@ type ChunkStoreServiceServer interface {
 	Commit(context.Context, *CommitRequest) (*CommitResponse, error)
 	ListTableFiles(context.Context, *ListTableFilesRequest) (*ListTableFilesResponse, error)
 	AddTableFiles(context.Context, *AddTableFilesRequest) (*AddTableFilesResponse, error)
-	ListAppendixTableFiles(context.Context, *ListTableFilesRequest) (*ListTableFilesResponse, error)
-	SetAppendix(context.Context, *AddTableFilesRequest) (*AddTableFilesResponse, error)
 	mustEmbedUnimplementedChunkStoreServiceServer()
 }
 
@@ -235,12 +213,6 @@ func (*UnimplementedChunkStoreServiceServer) ListTableFiles(context.Context, *Li
 }
 func (*UnimplementedChunkStoreServiceServer) AddTableFiles(context.Context, *AddTableFilesRequest) (*AddTableFilesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AddTableFiles not implemented")
-}
-func (*UnimplementedChunkStoreServiceServer) ListAppendixTableFiles(context.Context, *ListTableFilesRequest) (*ListTableFilesResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListAppendixTableFiles not implemented")
-}
-func (*UnimplementedChunkStoreServiceServer) SetAppendix(context.Context, *AddTableFilesRequest) (*AddTableFilesResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SetAppendix not implemented")
 }
 func (*UnimplementedChunkStoreServiceServer) mustEmbedUnimplementedChunkStoreServiceServer() {}
 
@@ -436,42 +408,6 @@ func _ChunkStoreService_AddTableFiles_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
-func _ChunkStoreService_ListAppendixTableFiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListTableFilesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ChunkStoreServiceServer).ListAppendixTableFiles(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/dolt.services.remotesapi.v1alpha1.ChunkStoreService/ListAppendixTableFiles",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ChunkStoreServiceServer).ListAppendixTableFiles(ctx, req.(*ListTableFilesRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _ChunkStoreService_SetAppendix_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(AddTableFilesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ChunkStoreServiceServer).SetAppendix(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/dolt.services.remotesapi.v1alpha1.ChunkStoreService/SetAppendix",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ChunkStoreServiceServer).SetAppendix(ctx, req.(*AddTableFilesRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 var _ChunkStoreService_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "dolt.services.remotesapi.v1alpha1.ChunkStoreService",
 	HandlerType: (*ChunkStoreServiceServer)(nil),
@@ -511,14 +447,6 @@ var _ChunkStoreService_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AddTableFiles",
 			Handler:    _ChunkStoreService_AddTableFiles_Handler,
-		},
-		{
-			MethodName: "ListAppendixTableFiles",
-			Handler:    _ChunkStoreService_ListAppendixTableFiles_Handler,
-		},
-		{
-			MethodName: "SetAppendix",
-			Handler:    _ChunkStoreService_SetAppendix_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -50,12 +50,9 @@ const (
 	appendixAttr                = "appendix"
 	prevLockExpressionValuesKey = ":prev"
 	versExpressionValuesKey     = ":vers"
-	updateExpressionNamesKey    = "#A"
-	updateExpressionValuesKey   = ":a"
 )
 
 var (
-	updateExpression                 = fmt.Sprintf("SET %s = %s", updateExpressionNamesKey, updateExpressionValuesKey)
 	valueEqualsExpression            = fmt.Sprintf("(%s = %s) and (%s = %s)", lockAttr, prevLockExpressionValuesKey, versAttr, versExpressionValuesKey)
 	valueNotExistsOrEqualsExpression = fmt.Sprintf("attribute_not_exists("+lockAttr+") or %s", valueEqualsExpression)
 )
@@ -63,7 +60,6 @@ var (
 type ddbsvc interface {
 	GetItemWithContext(ctx aws.Context, input *dynamodb.GetItemInput, opts ...request.Option) (*dynamodb.GetItemOutput, error)
 	PutItemWithContext(ctx aws.Context, input *dynamodb.PutItemInput, opts ...request.Option) (*dynamodb.PutItemOutput, error)
-	UpdateItemWithContext(ctx aws.Context, input *dynamodb.UpdateItemInput, opts ...request.Option) (*dynamodb.UpdateItemOutput, error)
 }
 
 // dynamoManifest assumes the existence of a DynamoDB table whose primary partition key is in String format and named `db`.
@@ -214,35 +210,6 @@ func (dm dynamoManifest) Update(ctx context.Context, lastLock addr, newContents 
 	}
 
 	return newContents, nil
-}
-
-func (dm dynamoManifest) SetAppendix(ctx context.Context, specs []tableSpec) error {
-	if len(specs) < 1 {
-		return nil
-	}
-
-	specStr := ""
-	if len(specs) > 0 {
-		tableInfo := make([]string, 2*len(specs))
-		formatSpecs(specs, tableInfo)
-		specStr = strings.Join(tableInfo, ":")
-	}
-
-	args := dynamodb.UpdateItemInput{
-		TableName:                aws.String(dm.table),
-		ExpressionAttributeNames: map[string]*string{updateExpressionNamesKey: aws.String(appendixAttr)},
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			updateExpressionValuesKey: {S: aws.String(specStr)},
-		},
-		Key:              map[string]*dynamodb.AttributeValue{dbAttr: {S: aws.String(dm.db)}},
-		UpdateExpression: aws.String(updateExpression),
-	}
-
-	_, err := dm.ddbsvc.UpdateItemWithContext(ctx, &args)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func errIsConditionalCheckFailed(err error) bool {
