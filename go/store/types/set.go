@@ -127,7 +127,16 @@ func (s Set) Diff(ctx context.Context, last Set, changes chan<- ValueChanged) er
 	if s.Equals(last) {
 		return nil
 	}
-	return orderedSequenceDiffLeftRight(ctx, last.orderedSequence, s.orderedSequence, changes)
+	return orderedSequenceDiffTopDown(ctx, last.orderedSequence, s.orderedSequence, changes)
+}
+
+// DiffHybrid computes the diff from |last| to |s| using a hybrid algorithm
+// which balances returning results early vs completing quickly, if possible.
+func (s Set) DiffHybrid(ctx context.Context, last Set, changes chan<- ValueChanged) error {
+	if s.Equals(last) {
+		return nil
+	}
+	return orderedSequenceDiffBest(ctx, last.orderedSequence, s.orderedSequence, changes)
 }
 
 // DiffLeftRight computes the diff from |last| to |s| using a left-to-right
