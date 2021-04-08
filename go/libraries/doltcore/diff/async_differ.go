@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fatih/color"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/row"
@@ -67,6 +68,7 @@ var _ RowDiffer = &AsyncDiffer{}
 
 // todo: make package private once dolthub is migrated
 func NewAsyncDiffer(bufferedDiffs int) *AsyncDiffer {
+	fmt.Fprintf(color.Error, "Creating  AsyncDiffer with buffer size %d\n", bufferedDiffs)
 	return &AsyncDiffer{
 		diffChan:   make(chan diff.Difference, bufferedDiffs),
 		bufferSize: bufferedDiffs,
@@ -82,18 +84,18 @@ func tableDontDescendLists(v1, v2 types.Value) bool {
 }
 
 func (ad *AsyncDiffer) Start(ctx context.Context, from, to types.Map) {
-	ad.start(ctx, func() error {
+	ad.start(ctx, func(ctx context.Context) error {
 		return diff.Diff(ctx, from, to, ad.diffChan, true, tableDontDescendLists)
 	})
 }
 
 func (ad *AsyncDiffer) StartWithRange(ctx context.Context, from, to types.Map, start types.Value, inRange types.ValueInRange) {
-	ad.start(ctx, func() error {
+	ad.start(ctx, func(ctx context.Context) error {
 		return diff.DiffMapRange(ctx, from, to, start, inRange, ad.diffChan, true, tableDontDescendLists)
 	})
 }
 
-func (ad *AsyncDiffer) start(ctx context.Context, diffFunc func() error) {
+func (ad *AsyncDiffer) start(ctx context.Context, diffFunc func(ctx context.Context) error) {
 	ad.eg, ad.egCtx = errgroup.WithContext(ctx)
 	ad.egCancel = async.GoWithCancel(ad.egCtx, ad.eg, func(ctx context.Context) (err error) {
 		defer close(ad.diffChan)
@@ -102,7 +104,7 @@ func (ad *AsyncDiffer) start(ctx context.Context, diffFunc func() error) {
 				err = fmt.Errorf("panic in diff.Diff: %v", r)
 			}
 		}()
-		return diffFunc()
+		return diffFunc(ctx)
 	})
 }
 
@@ -125,12 +127,14 @@ func (ad *AsyncDiffer) GetDiffs(numDiffs int, timeout time.Duration) ([]*diff.Di
 				ad.diffStats[d.ChangeType]++
 				diffs = append(diffs, &d)
 				if numDiffs != 0 && numDiffs == len(diffs) {
+					fmt.Fprintf(color.Error, "AsyncDiffer got target numDiffs: %d\n", numDiffs)
 					return diffs, true, nil
 				}
 			} else {
 				return diffs, false, ad.eg.Wait()
 			}
 		case <-timeoutChan:
+			fmt.Fprintf(color.Error, "AsyncDiffer timed out with len(diffs): %d\n", len(diffs))
 			return diffs, true, nil
 		case <-ad.egCtx.Done():
 			return nil, false, ad.eg.Wait()
