@@ -150,6 +150,21 @@ func (te *sqlTableEditor) Close(ctx *sql.Context) error {
 	return te.flush(ctx)
 }
 
+// Savepoint implements the interface sql.StatementBounder.
+func (te *sqlTableEditor) Savepoint(ctx *sql.Context) {
+	te.tableEditor.StatementStarted(ctx)
+}
+
+// Rollback implements the interface sql.StatementBounder.
+func (te *sqlTableEditor) Rollback(ctx *sql.Context) error {
+	return te.tableEditor.StatementFinished(ctx, true)
+}
+
+// Release implements the interface sql.StatementBounder.
+func (te *sqlTableEditor) Release(ctx *sql.Context) error {
+	return te.tableEditor.StatementFinished(ctx, false)
+}
+
 func (te *sqlTableEditor) flush(ctx *sql.Context) error {
 	newRoot, err := te.sess.Flush(ctx)
 	if err != nil {

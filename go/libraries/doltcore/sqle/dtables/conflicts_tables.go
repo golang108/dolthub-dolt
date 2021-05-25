@@ -156,6 +156,19 @@ func (cd *conflictDeleter) Delete(ctx *sql.Context, r sql.Row) error {
 	return nil
 }
 
+// Savepoint implements the interface sql.StatementBounder. Currently a no-op.
+func (cd *conflictDeleter) Savepoint(ctx *sql.Context) {}
+
+// Rollback implements the interface sql.StatementBounder. Currently a no-op.
+func (cd *conflictDeleter) Rollback(ctx *sql.Context) error {
+	return nil
+}
+
+// Release implements the interface sql.StatementBounder. Currently a no-op.
+func (cd *conflictDeleter) Release(ctx *sql.Context) error {
+	return nil
+}
+
 // Close finalizes the delete operation, persisting the result.
 func (cd *conflictDeleter) Close(ctx *sql.Context) error {
 	_, _, updatedTbl, err := cd.ct.tbl.ResolveConflicts(ctx, cd.pks)

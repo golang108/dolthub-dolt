@@ -247,6 +247,19 @@ func (bWr branchWriter) Delete(ctx *sql.Context, r sql.Row) error {
 	return bWr.bt.ddb.DeleteBranch(ctx, brRef)
 }
 
+// Savepoint implements the interface sql.StatementBounder. Currently a no-op.
+func (bWr branchWriter) Savepoint(ctx *sql.Context) {}
+
+// Rollback implements the interface sql.StatementBounder. Currently a no-op.
+func (bWr branchWriter) Rollback(ctx *sql.Context) error {
+	return nil
+}
+
+// Release implements the interface sql.StatementBounder. Currently a no-op.
+func (bWr branchWriter) Release(ctx *sql.Context) error {
+	return nil
+}
+
 // Close finalizes the delete operation, persisting the result.
 func (bWr branchWriter) Close(*sql.Context) error {
 	return nil
