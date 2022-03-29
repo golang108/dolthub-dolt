@@ -70,6 +70,7 @@ var _ sql.UpdatableTable = (*WritableIndexedDoltTable)(nil)
 var _ sql.DeletableTable = (*WritableIndexedDoltTable)(nil)
 var _ sql.ReplaceableTable = (*WritableIndexedDoltTable)(nil)
 var _ sql.StatisticsTable = (*WritableIndexedDoltTable)(nil)
+var _ sql.ProjectedTable = (*WritableIndexedDoltTable)(nil)
 
 type WritableIndexedDoltTable struct {
 	*WritableDoltTable
@@ -84,9 +85,15 @@ func (t *WritableIndexedDoltTable) PartitionRows(ctx *sql.Context, part sql.Part
 	return index.PartitionIndexedTableRows(ctx, t.indexLookup.Index(), part, t.sqlSch, t.projectedCols)
 }
 
-func (t *WritableIndexedDoltTable) WithProjection(colNames []string) sql.Table {
+// WithProjections implements sql.ProjectedTable
+func (t *WritableIndexedDoltTable) WithProjections(colNames []string) sql.Table {
 	return &WritableIndexedDoltTable{
-		WritableDoltTable: t.WithProjection(colNames).(*WritableDoltTable),
+		WritableDoltTable: t.WithProjections(colNames).(*WritableDoltTable),
 		indexLookup:       t.indexLookup,
 	}
+}
+
+// Projections implements sql.ProjectedTable
+func (t *WritableIndexedDoltTable) Projections() []string {
+	return t.projectedCols
 }
