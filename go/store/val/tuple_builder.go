@@ -227,6 +227,14 @@ func (tb *TupleBuilder) PutGeometry(i int, v []byte) {
 	tb.pos += sz
 }
 
+// PutHash128 writes a hash128 to the ith field of the Tuple being built.
+func (tb *TupleBuilder) PutHash128(i int, buf []byte) {
+	tb.Desc.expectEncoding(i, Hash128Enc)
+	tb.fields[i] = tb.buf[tb.pos : tb.pos+hash128Size]
+	writeRaw(tb.fields[i], buf[:hash128Size])
+	tb.pos += hash128Size
+}
+
 // PutRaw writes a []byte to the ith field of the Tuple being built.
 func (tb *TupleBuilder) PutRaw(i int, buf []byte) {
 	if buf == nil {

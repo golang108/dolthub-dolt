@@ -46,6 +46,8 @@ type Index interface {
 	IsUnique() bool
 	// IsUserDefined returns whether the given index was created by a user or automatically generated.
 	IsUserDefined() bool
+	// KeylessParent returns whether the given index is used by a keyless table.
+	KeylessParent() bool
 	// Name returns the name of the index.
 	Name() string
 	// PrimaryKeyTags returns the primary keys of the indexed table, in the order that they're stored for that table.
@@ -57,6 +59,12 @@ type Index interface {
 	ToTableTuple(ctx context.Context, fullKey types.Tuple, format *types.NomsBinFormat) (types.Tuple, error)
 	// VerifyMap returns whether the given map iterator contains all valid keys and values for this index.
 	VerifyMap(ctx context.Context, iter types.MapIterator, nbf *types.NomsBinFormat) error
+	// change replaces the tags or the index collection if either (or both) are not nil.
+	change(tags []uint64, ixc *indexCollectionImpl)
+	// copy returns an exact copy of the calling index.
+	copy() Index
+	// renameIndex renames the index.
+	renameIndex(newName string)
 }
 
 var _ Index = (*indexImpl)(nil)
@@ -72,7 +80,7 @@ type indexImpl struct {
 }
 
 func NewIndex(name string, tags, allTags []uint64, indexColl *indexCollectionImpl, props IndexProperties) Index {
-	return &indexImpl{
+	index := indexImpl{
 		name:          name,
 		tags:          tags,
 		allTags:       allTags,
@@ -81,6 +89,10 @@ func NewIndex(name string, tags, allTags []uint64, indexColl *indexCollectionImp
 		isUserDefined: props.IsUserDefined,
 		comment:       props.Comment,
 	}
+	if props.KeylessParent && types.Format_Default == types.Format_DOLT_1 {
+		return &prollyKeylessIndex{index}
+	}
+	return &index
 }
 
 // AllTags implements Index.
@@ -129,6 +141,9 @@ func (ix *indexImpl) Equals(other Index) bool {
 
 // DeepEquals implements Index.
 func (ix *indexImpl) DeepEquals(other Index) bool {
+	if _, ok := other.(*indexImpl); !ok {
+		return false
+	}
 	if ix.Count() != other.Count() {
 		return false
 	}
@@ -165,6 +180,11 @@ func (ix *indexImpl) IsUnique() bool {
 // IsUserDefined implements Index.
 func (ix *indexImpl) IsUserDefined() bool {
 	return ix.isUserDefined
+}
+
+// KeylessParent implements Index.
+func (ix *indexImpl) KeylessParent() bool {
+	return false
 }
 
 // Name implements Index.
@@ -299,12 +319,28 @@ func (ix *indexImpl) VerifyMap(ctx context.Context, iter types.MapIterator, nbf 
 	return err
 }
 
-// copy returns an exact copy of the calling index.
-func (ix *indexImpl) copy() *indexImpl {
+// change implements the interface Index.
+func (ix *indexImpl) change(tags []uint64, ixc *indexCollectionImpl) {
+	if len(tags) > 0 {
+		ix.tags = tags
+	}
+	if ixc != nil {
+		ix.indexColl = ixc
+	}
+	ix.allTags = combineAllTags(ix.tags, ixc.pks)
+}
+
+// copy implements the interface Index.
+func (ix *indexImpl) copy() Index {
 	newIx := *ix
 	newIx.tags = make([]uint64, len(ix.tags))
 	_ = copy(newIx.tags, ix.tags)
 	newIx.allTags = make([]uint64, len(ix.allTags))
 	_ = copy(newIx.allTags, ix.allTags)
 	return &newIx
+}
+
+// renameIndex implements the interface Index.
+func (ix *indexImpl) renameIndex(newName string) {
+	ix.name = newName
 }

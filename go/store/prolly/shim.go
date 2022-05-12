@@ -20,6 +20,7 @@ import (
 	"github.com/dolthub/vitess/go/vt/proto/query"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/schema"
+	"github.com/dolthub/dolt/go/libraries/doltcore/schema/typeinfo"
 	"github.com/dolthub/dolt/go/store/chunks"
 	"github.com/dolthub/dolt/go/store/datas"
 	"github.com/dolthub/dolt/go/store/prolly/tree"
@@ -53,7 +54,7 @@ func ChunkStoreFromVRW(vrw types.ValueReadWriter) chunks.ChunkStore {
 	panic("unknown ValueReadWriter")
 }
 
-func MapDescriptorsFromScheam(sch schema.Schema) (kd, vd val.TupleDesc) {
+func MapDescriptorsFromSchema(sch schema.Schema) (kd, vd val.TupleDesc) {
 	kd = KeyDescriptorFromSchema(sch)
 	vd = ValueDescriptorFromSchema(sch)
 	return
@@ -66,22 +67,20 @@ func KeyDescriptorFromSchema(sch schema.Schema) val.TupleDesc {
 
 	var tt []val.Type
 	_ = sch.GetPKCols().Iter(func(tag uint64, col schema.Column) (stop bool, err error) {
-		tt = append(tt, val.Type{
-			Enc:      encodingFromSqlType(col.TypeInfo.ToSqlType().Type()),
-			Nullable: columnNullable(col),
-		})
+		if col.TypeInfo.GetTypeIdentifier() == typeinfo.UuidTypeIdentifier {
+			tt = append(tt, val.Type{
+				Enc:      val.Hash128Enc,
+				Nullable: col.IsNullable(),
+			})
+		} else {
+			tt = append(tt, val.Type{
+				Enc:      encodingFromSqlType(col.TypeInfo.ToSqlType().Type()),
+				Nullable: col.IsNullable(),
+			})
+		}
 		return
 	})
 	return val.NewTupleDescriptor(tt...)
-}
-
-func columnNullable(col schema.Column) bool {
-	for _, cnst := range col.Constraints {
-		if cnst.GetConstraintType() == schema.NotNullConstraintType {
-			return false
-		}
-	}
-	return true
 }
 
 func ValueDescriptorFromSchema(sch schema.Schema) val.TupleDesc {
@@ -91,10 +90,17 @@ func ValueDescriptorFromSchema(sch schema.Schema) val.TupleDesc {
 	}
 
 	_ = sch.GetNonPKCols().Iter(func(tag uint64, col schema.Column) (stop bool, err error) {
-		tt = append(tt, val.Type{
-			Enc:      encodingFromSqlType(col.TypeInfo.ToSqlType().Type()),
-			Nullable: col.IsNullable(),
-		})
+		if col.TypeInfo.GetTypeIdentifier() == typeinfo.UuidTypeIdentifier {
+			tt = append(tt, val.Type{
+				Enc:      val.Hash128Enc,
+				Nullable: col.IsNullable(),
+			})
+		} else {
+			tt = append(tt, val.Type{
+				Enc:      encodingFromSqlType(col.TypeInfo.ToSqlType().Type()),
+				Nullable: col.IsNullable(),
+			})
+		}
 		return
 	})
 	return val.NewTupleDescriptor(tt...)

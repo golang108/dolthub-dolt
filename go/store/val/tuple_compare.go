@@ -14,6 +14,8 @@
 
 package val
 
+import "bytes"
+
 // TupleComparator compares Tuples.
 type TupleComparator interface {
 	// Compare compares pairs of Tuples.
@@ -103,6 +105,8 @@ func compare(typ Type, left, right []byte) int {
 		return compareString(readString(left), readString(right))
 	case ByteStringEnc:
 		return compareByteString(readByteString(left), readByteString(right))
+	case Hash128Enc:
+		return bytes.Compare(left, right)
 	default:
 		panic("unknown encoding")
 	}

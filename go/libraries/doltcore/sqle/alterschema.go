@@ -205,7 +205,7 @@ func modifyColumn(
 		}
 	}
 
-	newSchema, err := replaceColumnInSchema(sch, existingCol, newCol, order)
+	newSchema, err := replaceColumnInSchema(sch, existingCol, newCol, order, tbl.Format())
 	if err != nil {
 		return nil, err
 	}
@@ -416,7 +416,7 @@ func updateRowDataWithNewType(
 }
 
 // replaceColumnInSchema replaces the column with the name given with its new definition, optionally reordering it.
-func replaceColumnInSchema(sch schema.Schema, oldCol schema.Column, newCol schema.Column, order *sql.ColumnOrder) (schema.Schema, error) {
+func replaceColumnInSchema(sch schema.Schema, oldCol schema.Column, newCol schema.Column, order *sql.ColumnOrder, format *types.NomsBinFormat) (schema.Schema, error) {
 	// If no order is specified, insert in the same place as the existing column
 	prevColumn := ""
 	for _, col := range sch.GetAllCols().GetColumns() {
@@ -473,7 +473,7 @@ func replaceColumnInSchema(sch schema.Schema, oldCol schema.Column, newCol schem
 				tags[i] = newCol.Tag
 			}
 		}
-		_, err = newSch.Indexes().AddIndexByColTags(index.Name(), tags, schema.IndexProperties{
+		_, err = newSch.Indexes().AddIndexByColTags(index.Name(), tags, format, schema.IndexProperties{
 			IsUnique:      index.IsUnique(),
 			IsUserDefined: index.IsUserDefined(),
 			Comment:       index.Comment(),

@@ -151,7 +151,8 @@ type encodedIndex struct {
 	Tags            []uint64 `noms:"tags" json:"tags"`
 	Comment         string   `noms:"comment" json:"comment"`
 	Unique          bool     `noms:"unique" json:"unique"`
-	IsSystemDefined bool     `noms:"hidden,omitempty" json:"hidden,omitempty"` // Was previously named Hidden, do not change noms name
+	IsSystemDefined bool     `noms:"hidden,omitempty" json:"hidden,omitempty"`       // Was previously named Hidden, do not change noms name
+	ProllyKeyless   bool     `noms:"p_keyless,omitempty" json:"p_keyless,omitempty"` // Prolly keyless indexes use a different struct
 }
 
 type encodedCheck struct {
@@ -236,6 +237,7 @@ func toSchemaData(sch schema.Schema) (schemaData, error) {
 			Comment:         index.Comment(),
 			Unique:          index.IsUnique(),
 			IsSystemDefined: !index.IsUserDefined(),
+			ProllyKeyless:   index.KeylessParent(), // Only prolly keyless indexes return true
 		}
 	}
 
@@ -280,7 +282,6 @@ func (sd schemaData) decodeSchema() (schema.Schema, error) {
 }
 
 func (sd schemaData) addChecksIndexesAndPkOrderingToSchema(sch schema.Schema) error {
-
 	// initialize pk order before adding indexes
 	if sd.PkOrdinals != nil {
 		err := sch.SetPkOrdinals(sd.PkOrdinals)
@@ -290,13 +291,14 @@ func (sd schemaData) addChecksIndexesAndPkOrderingToSchema(sch schema.Schema) er
 	}
 
 	for _, encodedIndex := range sd.IndexCollection {
-		_, err := sch.Indexes().UnsafeAddIndexByColTags(
+		_, err := sch.Indexes().UnsafeDecoderAddIndexByColTags(
 			encodedIndex.Name,
 			encodedIndex.Tags,
 			schema.IndexProperties{
 				IsUnique:      encodedIndex.Unique,
 				IsUserDefined: !encodedIndex.IsSystemDefined,
 				Comment:       encodedIndex.Comment,
+				KeylessParent: encodedIndex.ProllyKeyless,
 			},
 		)
 		if err != nil {

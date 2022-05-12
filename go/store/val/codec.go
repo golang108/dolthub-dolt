@@ -127,6 +127,8 @@ func sizeFromType(t Type) (ByteSize, bool) {
 		return timestampSize, true
 	case YearEnc:
 		return int16Size, true
+	case Hash128Enc:
+		return hash128Size, true
 	default:
 		return 0, false
 	}

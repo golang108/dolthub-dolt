@@ -93,10 +93,12 @@ func CreateIndex(
 	index, err := sch.Indexes().AddIndexByColNames(
 		indexName,
 		realColNames,
+		table.Format(),
 		schema.IndexProperties{
 			IsUnique:      isUnique,
 			IsUserDefined: isUserDefined,
 			Comment:       comment,
+			KeylessParent: schema.IsKeyless(sch),
 		},
 	)
 	if err != nil {

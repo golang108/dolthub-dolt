@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/dolthub/dolt/go/store/types"
 )
 
 type IndexCollection interface {
@@ -25,11 +27,13 @@ type IndexCollection interface {
 	// It does not perform any kind of checking, and is intended for schema modifications.
 	AddIndex(indexes ...Index)
 	// AddIndexByColNames adds an index with the given name and columns (in index order).
-	AddIndexByColNames(indexName string, cols []string, props IndexProperties) (Index, error)
+	AddIndexByColNames(indexName string, cols []string, format *types.NomsBinFormat, props IndexProperties) (Index, error)
 	// AddIndexByColTags adds an index with the given name and column tags (in index order).
-	AddIndexByColTags(indexName string, tags []uint64, props IndexProperties) (Index, error)
+	AddIndexByColTags(indexName string, tags []uint64, format *types.NomsBinFormat, props IndexProperties) (Index, error)
 	// todo: this method is trash, clean up this interface
-	UnsafeAddIndexByColTags(indexName string, tags []uint64, props IndexProperties) (Index, error)
+	// UnsafeDecoderAddIndexByColTags is used only by the schema decoder to decode indexes directly to the collection.
+	// Should not be used outside of the schema decoder.
+	UnsafeDecoderAddIndexByColTags(indexName string, tags []uint64, props IndexProperties) (Index, error)
 	// AllIndexes returns a slice containing all of the indexes in this collection.
 	AllIndexes() []Index
 	// Contains returns whether the given index name already exists for this table.
@@ -69,21 +73,22 @@ type IndexCollection interface {
 type IndexProperties struct {
 	IsUnique      bool
 	IsUserDefined bool
+	KeylessParent bool
 	Comment       string
 }
 
 type indexCollectionImpl struct {
 	colColl       *ColCollection
-	indexes       map[string]*indexImpl
-	colTagToIndex map[uint64][]*indexImpl
+	indexes       map[string]Index
+	colTagToIndex map[uint64][]Index
 	pks           []uint64
 }
 
 func NewIndexCollection(cols *ColCollection, pkCols *ColCollection) IndexCollection {
 	ixc := &indexCollectionImpl{
 		colColl:       cols,
-		indexes:       make(map[string]*indexImpl),
-		colTagToIndex: make(map[uint64][]*indexImpl),
+		indexes:       make(map[string]Index),
+		colTagToIndex: make(map[uint64][]Index),
 	}
 	if cols != nil {
 		for _, col := range cols.cols {
@@ -102,38 +107,33 @@ func NewIndexCollection(cols *ColCollection, pkCols *ColCollection) IndexCollect
 }
 
 func (ixc *indexCollectionImpl) AddIndex(indexes ...Index) {
-	for _, indexInterface := range indexes {
-		index, ok := indexInterface.(*indexImpl)
-		if !ok {
-			panic(fmt.Errorf("unknown index type: %T", indexInterface))
-		}
+	for _, index := range indexes {
 		index = index.copy()
-		index.indexColl = ixc
-		index.allTags = combineAllTags(index.tags, ixc.pks)
-		oldNamedIndex, ok := ixc.indexes[index.name]
+		index.change(nil, ixc)
+		oldNamedIndex, ok := ixc.indexes[index.Name()]
 		if ok {
 			ixc.removeIndex(oldNamedIndex)
 		}
-		oldTaggedIndex := ixc.containsColumnTagCollection(index.tags...)
+		oldTaggedIndex := ixc.containsColumnTagCollection(index.IndexedColumnTags()...)
 		if oldTaggedIndex != nil {
 			ixc.removeIndex(oldTaggedIndex)
 		}
-		ixc.indexes[index.name] = index
-		for _, tag := range index.tags {
+		ixc.indexes[index.Name()] = index
+		for _, tag := range index.IndexedColumnTags() {
 			ixc.colTagToIndex[tag] = append(ixc.colTagToIndex[tag], index)
 		}
 	}
 }
 
-func (ixc *indexCollectionImpl) AddIndexByColNames(indexName string, cols []string, props IndexProperties) (Index, error) {
+func (ixc *indexCollectionImpl) AddIndexByColNames(indexName string, cols []string, format *types.NomsBinFormat, props IndexProperties) (Index, error) {
 	tags, ok := ixc.columnNamesToTags(cols)
 	if !ok {
 		return nil, fmt.Errorf("the table does not contain at least one of the following columns: `%v`", cols)
 	}
-	return ixc.AddIndexByColTags(indexName, tags, props)
+	return ixc.AddIndexByColTags(indexName, tags, format, props)
 }
 
-func (ixc *indexCollectionImpl) AddIndexByColTags(indexName string, tags []uint64, props IndexProperties) (Index, error) {
+func (ixc *indexCollectionImpl) AddIndexByColTags(indexName string, tags []uint64, format *types.NomsBinFormat, props IndexProperties) (Index, error) {
 	if strings.HasPrefix(indexName, "dolt_") {
 		return nil, fmt.Errorf("indexes cannot be prefixed with `dolt_`")
 	}
@@ -153,7 +153,8 @@ func (ixc *indexCollectionImpl) AddIndexByColTags(indexName string, tags []uint6
 		}
 	}
 
-	index := &indexImpl{
+	var index Index
+	base := indexImpl{
 		indexColl:     ixc,
 		name:          indexName,
 		tags:          tags,
@@ -161,6 +162,11 @@ func (ixc *indexCollectionImpl) AddIndexByColTags(indexName string, tags []uint6
 		isUnique:      props.IsUnique,
 		isUserDefined: props.IsUserDefined,
 		comment:       props.Comment,
+	}
+	if props.KeylessParent && format == types.Format_DOLT_1 {
+		index = &prollyKeylessIndex{base}
+	} else {
+		index = &base
 	}
 	ixc.indexes[indexName] = index
 	for _, tag := range tags {
@@ -177,8 +183,9 @@ func validateColumnIndexable(c Column) error {
 	return nil
 }
 
-func (ixc *indexCollectionImpl) UnsafeAddIndexByColTags(indexName string, tags []uint64, props IndexProperties) (Index, error) {
-	index := &indexImpl{
+func (ixc *indexCollectionImpl) UnsafeDecoderAddIndexByColTags(indexName string, tags []uint64, props IndexProperties) (Index, error) {
+	var index Index
+	base := indexImpl{
 		indexColl:     ixc,
 		name:          indexName,
 		tags:          tags,
@@ -186,6 +193,11 @@ func (ixc *indexCollectionImpl) UnsafeAddIndexByColTags(indexName string, tags [
 		isUnique:      props.IsUnique,
 		isUserDefined: props.IsUserDefined,
 		comment:       props.Comment,
+	}
+	if props.KeylessParent { // The decoder only sets this to true if it's a prolly keyless index
+		index = &prollyKeylessIndex{base}
+	} else {
+		index = &base
 	}
 	ixc.indexes[indexName] = index
 	for _, tag := range tags {
@@ -223,7 +235,7 @@ func (ixc *indexCollectionImpl) Equals(other IndexCollection) bool {
 		return false
 	}
 	for _, index := range ixc.indexes {
-		otherIndex := otherIxc.containsColumnTagCollection(index.tags...)
+		otherIndex := otherIxc.containsColumnTagCollection(index.IndexedColumnTags()...)
 		if otherIndex == nil || !index.Equals(otherIndex) {
 			return false
 		}
@@ -294,12 +306,12 @@ func (ixc *indexCollectionImpl) IndexesWithColumn(columnName string) []Index {
 }
 
 func (ixc *indexCollectionImpl) IndexesWithTag(tag uint64) []Index {
-	indexImpls := ixc.colTagToIndex[tag]
-	indexes := make([]Index, len(indexImpls))
-	for i, idx := range indexImpls {
-		indexes[i] = idx
+	indexes := ixc.colTagToIndex[tag]
+	outSlice := make([]Index, len(indexes))
+	for i, idx := range indexes {
+		outSlice[i] = idx
 	}
-	return indexes
+	return outSlice
 }
 
 func (ixc *indexCollectionImpl) Iter(cb func(index Index) (stop bool, err error)) error {
@@ -318,14 +330,8 @@ func (ixc *indexCollectionImpl) Iter(cb func(index Index) (stop bool, err error)
 func (ixc *indexCollectionImpl) Merge(indexes ...Index) {
 	for _, index := range indexes {
 		if tags, ok := ixc.columnNamesToTags(index.ColumnNames()); ok && !ixc.Contains(index.Name()) {
-			newIndex := &indexImpl{
-				name:          index.Name(),
-				tags:          tags,
-				indexColl:     ixc,
-				isUnique:      index.IsUnique(),
-				isUserDefined: index.IsUserDefined(),
-				comment:       index.Comment(),
-			}
+			newIndex := index.copy()
+			newIndex.change(tags, ixc)
 			ixc.AddIndex(newIndex)
 		}
 	}
@@ -337,7 +343,7 @@ func (ixc *indexCollectionImpl) RemoveIndex(indexName string) (Index, error) {
 	}
 	index := ixc.indexes[indexName]
 	delete(ixc.indexes, indexName)
-	for _, tag := range index.tags {
+	for _, tag := range index.IndexedColumnTags() {
 		indexesRefThisCol := ixc.colTagToIndex[tag]
 		for i, comparisonIndex := range indexesRefThisCol {
 			if comparisonIndex == index {
@@ -358,7 +364,7 @@ func (ixc *indexCollectionImpl) RenameIndex(oldName, newName string) (Index, err
 	}
 	index := ixc.indexes[oldName]
 	delete(ixc.indexes, oldName)
-	index.name = newName
+	index.renameIndex(newName)
 	ixc.indexes[newName] = index
 	return index, nil
 }
@@ -375,12 +381,12 @@ func (ixc *indexCollectionImpl) columnNamesToTags(cols []string) ([]uint64, bool
 	return tags, true
 }
 
-func (ixc *indexCollectionImpl) containsColumnTagCollection(tags ...uint64) *indexImpl {
+func (ixc *indexCollectionImpl) containsColumnTagCollection(tags ...uint64) Index {
 	tagCount := len(tags)
 	for _, idx := range ixc.indexes {
-		if tagCount == len(idx.tags) {
+		if tagCount == len(idx.IndexedColumnTags()) {
 			allMatch := true
-			for i, idxTag := range idx.tags {
+			for i, idxTag := range idx.IndexedColumnTags() {
 				if tags[i] != idxTag {
 					allMatch = false
 					break
@@ -394,10 +400,10 @@ func (ixc *indexCollectionImpl) containsColumnTagCollection(tags ...uint64) *ind
 	return nil
 }
 
-func (ixc *indexCollectionImpl) removeIndex(index *indexImpl) {
-	delete(ixc.indexes, index.name)
-	for _, tag := range index.tags {
-		var newReferences []*indexImpl
+func (ixc *indexCollectionImpl) removeIndex(index Index) {
+	delete(ixc.indexes, index.Name())
+	for _, tag := range index.IndexedColumnTags() {
+		var newReferences []Index
 		for _, referencedIndex := range ixc.colTagToIndex[tag] {
 			if referencedIndex != index {
 				newReferences = append(newReferences, referencedIndex)

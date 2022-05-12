@@ -191,14 +191,6 @@ func TestAmbiguousColumnResolution(t *testing.T) {
 }
 
 func TestInsertInto(t *testing.T) {
-	if types.IsFormat_DOLT_1(types.Format_Default) {
-		for i := len(enginetest.InsertScripts) - 1; i >= 0; i-- {
-			//TODO: test uses keyless foreign key logic which is not yet fully implemented
-			if enginetest.InsertScripts[i].Name == "Insert on duplicate key" {
-				enginetest.InsertScripts = append(enginetest.InsertScripts[:i], enginetest.InsertScripts[i+1:]...)
-			}
-		}
-	}
 	enginetest.TestInsertInto(t, newDoltHarness(t))
 }
 
@@ -968,10 +960,6 @@ func TestPrepared(t *testing.T) {
 
 func TestPreparedInsert(t *testing.T) {
 	skipPreparedTests(t)
-	if types.IsFormat_DOLT_1(types.Format_Default) {
-		//TODO: test uses keyless foreign key logic which is not yet fully implemented
-		t.Skip("test uses keyless foreign key logic which is not yet fully implemented")
-	}
 	enginetest.TestPreparedInsert(t, newDoltHarness(t))
 }
 
