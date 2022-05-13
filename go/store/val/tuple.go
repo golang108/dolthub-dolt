@@ -27,50 +27,23 @@ const (
 	countSize ByteSize = 2
 )
 
-// todo(andy): update comment
-// Tuples are byte slices containing field values and a footer. Tuples only
-//   contain Values for non-NULL Fields. Value i contains the data for ith non-
-//   NULL Field. Values are packed contiguously from the front of the Tuple. The
-//   footer contains offsets, a member mask, and a field count. offsets enable
-//   random access to Values. The member mask enables NULL-compaction for Values.
+// Tuple is a collection of values encoded as a byte string.
 //
+//   +---------+---------+-----+---------+---------+-------------+
+//   | Value 0 | Value 1 | ... | Value K | Offsets | Field Count |
+//   +---------+---------+-----+---------+---------+-------------+
+//
+//   Tuples are null-compacted and allow random-access via offsets. Field values
+//   are packed contiguously from the front of the Tuple's byte string. Offsets
+//   and a field count follow the field value array. The offset of the first
+//   field is omitted from the offsets array. A Tuple with N fields stores N-1
+//   offsets in its suffix. Offsets are stored for all fields, regardless of
+//   whether a field's value is null. Null fields are encoded as zero length
+//   values. As a consequence, encodings must differentiate null-values and
+//   zero-length values (by null-terminating for example).
 //   Tuples read and write Values as byte slices. (De)serialization is delegated
 //   to Tuple Descriptors, which know a Tuple's schema and associated encodings.
-//   When reading and writing Values, NULLs are encoded as nil byte slices. Note
-//   that these are not the same as zero-length byte slices. An empty string may
-//   be encoded as a zero-length byte slice and will be distinct from a NULL
-//   string both logically and semantically.
 //
-//   Tuple:
-//   +---------+---------+-----+---------+---------+-------------+-------------+
-//   | Value 0 | Value 1 | ... | Value K | offsets | Member Mask | Field Count |
-//   +---------+---------+-----+---------+---------+-------------+-------------+
-//
-//   offsets:
-//     The offset array contains a uint16 for each non-NULL field after field 0.
-//     Offset i encodes the distance to the ith Value from the front of the Tuple.
-//     The size of the offset array is 2*(K-1) bytes, where K is the number of
-//     Values in the Tuple.
-//   +----------+----------+-----+----------+
-//   | Offset 1 | Offset 2 | ... | Offset K |
-//   +----------+----------+-----+----------+
-//
-//   Member Mask:
-//     The member mask is a bit-array encoding field membership in Tuples. Fields
-//     with non-NULL values are present, and encoded as 1, NULL fields are absent
-//     and encoded as 0. The size of the bit array is math.Ceil(N/8) bytes, where
-//     N is the number of Fields in the Tuple.
-//   +------------+-------------+-----+
-//   | Bits 0 - 7 | Bits 8 - 15 | ... |
-//   +------------+-------------+-----+
-//
-//   Field Count:
-//      The field fieldCount is a uint16 containing the number of fields in the
-//     	Tuple, it is stored in 2 bytes.
-//   +----------------------+
-//   | Field Count (uint16) |
-//   +----------------------+
-
 type Tuple []byte
 
 var EmptyTuple = Tuple([]byte{0, 0})

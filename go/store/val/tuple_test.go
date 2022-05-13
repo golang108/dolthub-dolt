@@ -26,7 +26,6 @@ import (
 
 var testPool = pool.NewBuffPool()
 
-// todo(andy): randomize test seed
 var testRand = rand.New(rand.NewSource(1))
 
 func TestNewTuple(t *testing.T) {
