@@ -16,40 +16,19 @@ package commands
 
 import (
 	"context"
-	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"strings"
-
-	"github.com/fatih/color"
-
+	"errors"
 	"github.com/dolthub/dolt/go/cmd/dolt/cli"
 	"github.com/dolthub/dolt/go/cmd/dolt/errhand"
 	eventsapi "github.com/dolthub/dolt/go/gen/proto/dolt/services/eventsapi/v1alpha1"
+	"github.com/dolthub/dolt/go/libraries/doltcore/diff"
 	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb"
 	"github.com/dolthub/dolt/go/libraries/doltcore/env"
-	"github.com/dolthub/dolt/go/libraries/doltcore/mvdata"
-	"github.com/dolthub/dolt/go/libraries/doltcore/schema"
-	"github.com/dolthub/dolt/go/libraries/doltcore/table"
+	"github.com/dolthub/dolt/go/libraries/doltcore/row"
+	"github.com/dolthub/dolt/go/libraries/doltcore/rowconv"
 	"github.com/dolthub/dolt/go/libraries/doltcore/table/editor"
 	"github.com/dolthub/dolt/go/libraries/utils/argparser"
-	"github.com/dolthub/dolt/go/libraries/utils/filesys"
-	"github.com/dolthub/dolt/go/libraries/utils/iohelp"
-)
-
-const (
-	forceParam    = "force"
-	directoryFlag = "directory"
-	filenameFlag  = "file-name"
-	batchFlag     = "batch"
-
-	sqlFileExt     = "sql"
-	csvFileExt     = "csv"
-	jsonFileExt    = "json"
-	parquetFileExt = "parquet"
-	emptyFileExt   = ""
-	emptyStr       = ""
+	"github.com/dolthub/dolt/go/libraries/utils/set"
+	"io"
 )
 
 var dumpDocs = cli.CommandDocumentationContent{
@@ -78,19 +57,12 @@ func (cmd DumpCmd) Description() string {
 
 // CreateMarkdown creates a markdown file containing the help text for the command at the given path
 func (cmd DumpCmd) CreateMarkdown(wr io.Writer, commandStr string) error {
-	ap := cmd.ArgParser()
+	ap := cli.CreateCherryPickArgParser()
 	return CreateMarkdown(wr, cli.GetCommandDocumentation(commandStr, dumpDocs, ap))
 }
 
 func (cmd DumpCmd) ArgParser() *argparser.ArgParser {
-	ap := argparser.NewArgParser()
-	ap.SupportsFlag(forceParam, "f", "If data already exists in the destination, the force flag will allow the target to be overwritten.")
-	ap.SupportsFlag(batchFlag, "", "Returns batch insert statements wherever possible.")
-	ap.SupportsString(FormatFlag, "r", "result_file_type", "Define the type of the output file. Defaults to sql. Valid values are sql, csv, json and parquet.")
-	ap.SupportsString(filenameFlag, "", "file_name", "Define file name for dump file. Defaults to `doltdump.sql`.")
-	ap.SupportsString(directoryFlag, "", "directory_name", "Define directory name to dump the files in. Defaults to `doltdump/`.")
-
-	return ap
+	return cli.CreateCherryPickArgParser()
 }
 
 // EventType returns the type of the event to log
@@ -104,324 +76,343 @@ func (cmd DumpCmd) Exec(ctx context.Context, commandStr string, args []string, d
 	help, usage := cli.HelpAndUsagePrinters(cli.GetCommandDocumentation(commandStr, dumpDocs, ap))
 	apr := cli.ParseArgsOrDie(ap, args, help)
 
-	if apr.NArg() > 0 {
-		return HandleVErrAndExitCode(errhand.BuildDError("too many arguments").SetPrintUsage().Build(), usage)
+	// This command creates a commit, so we need user identity
+	if !cli.CheckUserNameAndEmail(dEnv) {
+		return 1
 	}
 
-	root, verr := GetWorkingWithVErr(dEnv)
-	if verr != nil {
+	// TODO : support single commit cherry-pick only for now
+	if apr.NArg() == 0 {
+		usage()
+		return 1
+	} else if apr.NArg() > 1 {
+		return HandleVErrAndExitCode(errhand.BuildDError("multiple commits not supported yet.").SetPrintUsage().Build(), usage)
+	}
+
+	cherryStr := apr.Arg(0)
+	if len(cherryStr) == 0 {
+		verr := errhand.BuildDError("error: cannot cherry-pick empty string").Build()
 		return HandleVErrAndExitCode(verr, usage)
 	}
 
-	tblNames, err := doltdb.GetNonSystemTableNames(ctx, root)
+	newWorkingRoot, commitMsg, err := CherryPicking(ctx, dEnv, cherryStr)
 	if err != nil {
-		return HandleVErrAndExitCode(errhand.BuildDError("error: failed to get tables").AddCause(err).Build(), usage)
-	}
-	if len(tblNames) == 0 {
-		cli.Println("No tables to export.")
+		return HandleVErrAndExitCode(errhand.VerboseErrorFromError(err), usage)
+	} else if newWorkingRoot == nil {
 		return 0
 	}
 
-	force := apr.Contains(forceParam)
-	resFormat, _ := apr.GetValue(FormatFlag)
-	resFormat = strings.TrimPrefix(resFormat, ".")
-
-	name, vErr := validateArgs(apr)
-	if vErr != nil {
-		return HandleVErrAndExitCode(vErr, usage)
+	err = dEnv.UpdateWorkingRoot(ctx, newWorkingRoot)
+	if err != nil {
+		return HandleVErrAndExitCode(errhand.VerboseErrorFromError(err), usage)
+	}
+	res := AddCmd{}.Exec(ctx, "add", []string{"-A"}, dEnv)
+	if res != 0 {
+		return res
 	}
 
-	// Look for schemas and procedures table, and add to tblNames only for sql dumps
-	if resFormat == emptyFileExt || resFormat == sqlFileExt {
-		sysTblNames, err := doltdb.GetSystemTableNames(ctx, root)
-		if err != nil {
-			return HandleVErrAndExitCode(errhand.VerboseErrorFromError(err), usage)
-		}
-		for _, tblName := range sysTblNames {
-			switch tblName {
-			case doltdb.SchemasTableName:
-				tblNames = append(tblNames, doltdb.SchemasTableName)
-			case doltdb.ProceduresTableName:
-				tblNames = append(tblNames, doltdb.ProceduresTableName)
+	// Pass in the final parameters for the author string.
+	commitParams := []string{"-m", commitMsg}
+	authorStr, ok := apr.GetValue(cli.AuthorParam)
+	if ok {
+		commitParams = append(commitParams, "--author", authorStr)
+	}
+
+	return CommitCmd{}.Exec(ctx, "commit", commitParams, dEnv)
+}
+
+func CherryPicking(ctx context.Context, dEnv *env.DoltEnv, cherryStr string) (*doltdb.RootValue, string, error) {
+	opts := editor.Options{Deaf: dEnv.BulkDbEaFactory(), Tempdir: dEnv.TempTableFilesDir()}
+
+	// check for clean working state
+	headRoot, err := dEnv.HeadRoot(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	workingRoot, err := dEnv.WorkingRoot(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	headHash, err := headRoot.HashOf()
+	if err != nil {
+		return nil, "", err
+	}
+	workingHash, err := workingRoot.HashOf()
+	if err != nil {
+		return nil, "", err
+	}
+	if !headHash.Equal(workingHash) {
+		return nil, "", errors.New("You must commit any changes before using cherry-pick.")
+	}
+
+	// get cherry-picked commit
+	cherryCS, err := doltdb.NewCommitSpec(cherryStr)
+	if err != nil {
+		return nil, "", err
+	}
+	cherryCM, err := dEnv.DoltDB.Resolve(ctx, cherryCS, dEnv.RepoStateReader().CWBHeadRef())
+	if err != nil {
+		return nil, "", err
+	}
+
+	ccm, err := cherryCM.GetCommitMeta(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	commitMsg := ccm.Description
+
+	//headCS, err := doltdb.NewCommitSpec("HEAD")
+	//if err != nil {
+	//	return HandleVErrAndExitCode(errhand.VerboseErrorFromError(err), usage)
+	//}
+	//headCM, err := dEnv.DoltDB.Resolve(context.TODO(), headCS, dEnv.RepoStateReader().CWBHeadRef())
+	//if err != nil {
+	//	return HandleVErrAndExitCode(errhand.VerboseErrorFromError(err), usage)
+	//}
+
+	workingRoot, err = cherryPick(ctx, dEnv.DoltDB, workingRoot, cherryCM, opts)
+	if err != nil {
+		return nil, "", err
+	}
+
+	workingHash, err = workingRoot.HashOf()
+	if err != nil {
+		return nil, "", err
+	}
+
+	if headHash.Equal(workingHash) {
+		cli.Println("No changes were made.")
+		return nil, "", nil
+	}
+
+	return workingRoot, commitMsg, nil
+}
+
+func cherryPick(ctx context.Context, ddb *doltdb.DoltDB, headRoot *doltdb.RootValue, cherryCM *doltdb.Commit, opts editor.Options) (*doltdb.RootValue, error) {
+	// TODO : get changes made in the cherry-picked commit
+	var err error
+	// fromRoot = parentRoot and toRoot = cherryPickRoot
+	fromRoot, toRoot, err := getParentAndCherryRoots(ctx, ddb, cherryCM)
+	if err != nil {
+		return nil, errhand.BuildDError("error: both tables in tableDelta are nil").Build()
+	}
+
+	workingSetTblNames, err := doltdb.GetAllTableNames(ctx, headRoot)
+	if err != nil {
+		return nil, errhand.BuildDError("failed to get table names").AddCause(err).Build()
+	}
+	workingSetTblSet := set.NewStrSet(workingSetTblNames)
+
+	stagedFKs, err := toRoot.GetForeignKeyCollection(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	tblDeltas, err := diff.GetTableDeltas(ctx, fromRoot, toRoot)
+
+	tblsToDropFromWorkingSet := set.NewStrSet(nil)
+	for _, td := range tblDeltas {
+		if td.IsDrop() {
+			if !workingSetTblSet.Contains(td.FromName) {
+				continue
 			}
-		}
-	}
 
-	switch resFormat {
-	case emptyFileExt, sqlFileExt:
-		if name == emptyStr {
-			name = fmt.Sprintf("doltdump.sql")
+			tblsToDropFromWorkingSet.Add(td.FromName)
+			stagedFKs.RemoveKeys(td.FromFks...)
 		} else {
-			if !strings.HasSuffix(name, ".sql") {
-				name = fmt.Sprintf("%s.sql", name)
+			// if tableName in 'to' commit does not exist in working set tables
+			// if it was created in previous commits not in working set?
+			if !workingSetTblSet.Contains(td.ToName) {
+				continue
 			}
-		}
 
-		dumpOpts := getDumpOptions(name, resFormat)
-		fPath, err := checkAndCreateOpenDestFile(ctx, root, dEnv, force, dumpOpts, name)
-		if err != nil {
-			return HandleVErrAndExitCode(errhand.VerboseErrorFromError(err), usage)
-		}
+			if td.IsRename() {
+				// rename table before adding the new version, so we don't have
+				// two copies of the same table
+				headRoot, err = headRoot.RenameTable(ctx, td.FromName, td.ToName)
+				if err != nil {
+					return nil, err
+				}
+			}
 
-		for _, tbl := range tblNames {
-			tblOpts := newTableArgs(tbl, dumpOpts.dest, apr.Contains(batchFlag))
-			err = dumpTable(ctx, dEnv, tblOpts, fPath)
+			// TODO : check for schema changes AND check for row changes
+			rowDiffs, err := getRowDiffs(ctx, td)
 			if err != nil {
-				return HandleVErrAndExitCode(err, usage)
+				return nil, err
+			}
+			//to, err = to.PutTable(ctx, td.ToName, td.ToTable)
+			//if err != nil {
+			//	return nil, "", err
+			//}
+			headRoot, err = applyRowDiffs(ctx, headRoot, td.ToName, td.ToTable, rowDiffs, opts)
+			if err != nil {
+				return nil, err
+			}
+
+			stagedFKs.RemoveKeys(td.FromFks...)
+			err = stagedFKs.AddKeys(td.ToFks...)
+			if err != nil {
+				return nil, err
+			}
+
+			// TODO : what is superSchema?
+			ss, _, err := fromRoot.GetSuperSchema(ctx, td.ToName)
+			if err != nil {
+				return nil, err
+			}
+
+			toRoot, err = toRoot.PutSuperSchema(ctx, td.ToName, ss)
+			if err != nil {
+				return nil, err
 			}
 		}
-	case csvFileExt:
-		err = dumpTables(ctx, root, dEnv, force, tblNames, csvFileExt, name, false)
+	}
+
+	toRoot, err = toRoot.PutForeignKeyCollection(ctx, stagedFKs)
+	if err != nil {
+		return nil, err
+	}
+
+	// RemoveTables also removes that table's ForeignKeys
+	toRoot, err = toRoot.RemoveTables(ctx, false, false, tblsToDropFromWorkingSet.AsSlice()...)
+	if err != nil {
+		return nil, err
+	}
+
+	return headRoot, nil
+}
+
+func applyRowDiffs(ctx context.Context, root *doltdb.RootValue, tName string, table *doltdb.Table, diffs []map[string]row.Row, opts editor.Options) (*doltdb.RootValue, error) {
+	tbl, _, _ := root.GetTable(ctx, tName)
+	tblSchema, _ := tbl.GetSchema(ctx)
+	tableEditor, err := editor.NewTableEditor(ctx, tbl, tblSchema, tName, opts)
+	for _, diffMap := range diffs {
+		to, hasTo := diffMap[diff.To]
+		from, hasFrom := diffMap[diff.From]
+
 		if err != nil {
-			return HandleVErrAndExitCode(errhand.VerboseErrorFromError(err), usage)
+			return nil, err
 		}
-	case jsonFileExt:
-		err = dumpTables(ctx, root, dEnv, force, tblNames, jsonFileExt, name, false)
+		if hasTo && hasFrom {
+			// update row
+			err = tableEditor.UpdateRow(context.Background(), from, to, nil)
+			if err != nil {
+				cli.Println(err)
+				return root, nil
+			}
+		} else if hasTo && !hasFrom {
+			// insert row
+			err = tableEditor.InsertRow(ctx, to, nil)
+			if err != nil {
+				cli.Println(err)
+				return root, nil
+			}
+		} else {
+			// delete row
+			err = tableEditor.DeleteRow(ctx, from)
+			if err != nil {
+				cli.Println(err)
+				return root, nil
+			}
+		}
+	}
+
+	t, _ := tableEditor.Table(ctx)
+	newRoot, err := root.PutTable(ctx, tName, t)
+	if err != nil {
+		return nil, err
+	}
+
+	return newRoot, nil
+}
+
+func getParentAndCherryRoots(ctx context.Context, ddb *doltdb.DoltDB, cherryCommit *doltdb.Commit) (*doltdb.RootValue, *doltdb.RootValue, error) {
+	cherryRoot, err := cherryCommit.GetRootValue(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var parentRoot *doltdb.RootValue
+	if len(cherryCommit.DatasParents()) > 0 {
+		parentCM, err := ddb.ResolveParent(ctx, cherryCommit, 0)
 		if err != nil {
-			return HandleVErrAndExitCode(errhand.VerboseErrorFromError(err), usage)
+			return nil, nil, err
 		}
-	case parquetFileExt:
-		err = dumpTables(ctx, root, dEnv, force, tblNames, parquetFileExt, name, false)
+		parentRoot, err = parentCM.GetRootValue(ctx)
 		if err != nil {
-			return HandleVErrAndExitCode(errhand.VerboseErrorFromError(err), usage)
+			return nil, nil, err
 		}
-	default:
-		return HandleVErrAndExitCode(errhand.BuildDError("invalid result format").SetPrintUsage().Build(), usage)
-	}
-
-	cli.PrintErrln(color.CyanString("Successfully exported data."))
-
-	return 0
-}
-
-type dumpOptions struct {
-	format string
-	dest   mvdata.DataLocation
-}
-
-type tableOptions struct {
-	tableName string
-	dest      mvdata.DataLocation
-	batched   bool
-}
-
-func (m tableOptions) IsBatched() bool {
-	return m.batched
-}
-
-func (m tableOptions) WritesToTable() bool {
-	return false
-}
-
-func (m tableOptions) SrcName() string {
-	return m.tableName
-}
-
-func (m tableOptions) DestName() string {
-	if f, fileDest := m.dest.(mvdata.FileDataLocation); fileDest {
-		return f.Path
-	}
-	return m.dest.String()
-}
-
-func (m dumpOptions) DumpDestName() string {
-	if f, fileDest := m.dest.(mvdata.FileDataLocation); fileDest {
-		return f.Path
-	}
-	return m.dest.String()
-}
-
-// dumpTable dumps table in file given specific table and file location info
-func dumpTable(ctx context.Context, dEnv *env.DoltEnv, tblOpts *tableOptions, filePath string) errhand.VerboseError {
-	rd, err := mvdata.NewSqlEngineReader(ctx, dEnv, tblOpts.tableName)
-	if err != nil {
-		return errhand.BuildDError("Error creating reader for %s.", tblOpts.SrcName()).AddCause(err).Build()
-	}
-
-	wr, err := getTableWriter(ctx, dEnv, tblOpts, rd.GetSchema(), filePath)
-	if err != nil {
-		return errhand.BuildDError("Error creating writer for %s.", tblOpts.SrcName()).AddCause(err).Build()
-	}
-
-	pipeline := mvdata.NewDataMoverPipeline(ctx, rd, wr)
-	err = pipeline.Execute()
-
-	if err != nil {
-		return errhand.BuildDError("Error with dumping %s.", tblOpts.SrcName()).AddCause(err).Build()
-	}
-
-	return nil
-}
-
-func getTableWriter(ctx context.Context, dEnv *env.DoltEnv, tblOpts *tableOptions, outSch schema.Schema, filePath string) (table.SqlTableWriter, errhand.VerboseError) {
-	opts := editor.Options{Deaf: dEnv.DbEaFactory(), Tempdir: dEnv.TempTableFilesDir()}
-
-	writer, err := dEnv.FS.OpenForWriteAppend(filePath, os.ModePerm)
-	if err != nil {
-		return nil, errhand.BuildDError("Error opening writer for %s.", tblOpts.DestName()).AddCause(err).Build()
-	}
-
-	root, err := dEnv.WorkingRoot(ctx)
-	if err != nil {
-		return nil, errhand.BuildDError("Could not create table writer for %s", tblOpts.tableName).AddCause(err).Build()
-	}
-
-	wr, err := tblOpts.dest.NewCreatingWriter(ctx, tblOpts, root, outSch, opts, writer)
-	if err != nil {
-		return nil, errhand.BuildDError("Could not create table writer for %s", tblOpts.tableName).AddCause(err).Build()
-	}
-
-	return wr, nil
-}
-
-// checkAndCreateOpenDestFile returns filePath to created dest file after checking for any existing file and handles it
-func checkAndCreateOpenDestFile(ctx context.Context, root *doltdb.RootValue, dEnv *env.DoltEnv, force bool, dumpOpts *dumpOptions, fileName string) (string, errhand.VerboseError) {
-	ow, err := checkOverwrite(ctx, root, dEnv.FS, force, dumpOpts.dest)
-	if err != nil {
-		return emptyStr, errhand.VerboseErrorFromError(err)
-	}
-	if ow {
-		return emptyStr, errhand.BuildDError("%s already exists. Use -f to overwrite.", fileName).Build()
-	}
-
-	// create new file
-	err = dEnv.FS.MkDirs(filepath.Dir(dumpOpts.DumpDestName()))
-	if err != nil {
-		return emptyStr, errhand.VerboseErrorFromError(err)
-	}
-
-	filePath, err := dEnv.FS.Abs(fileName)
-	if err != nil {
-		return emptyStr, errhand.VerboseErrorFromError(err)
-	}
-
-	os.OpenFile(filePath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
-
-	return filePath, nil
-}
-
-// checkOverwrite returns TRUE if the file exists and force flag not given and
-// FALSE if the file is stream data / file does not exist / file exists and force flag is given
-func checkOverwrite(ctx context.Context, root *doltdb.RootValue, fs filesys.ReadableFS, force bool, dest mvdata.DataLocation) (bool, error) {
-	if _, isStream := dest.(mvdata.StreamDataLocation); isStream {
-		return false, nil
-	}
-	if !force {
-		return dest.Exists(ctx, root, fs)
-	}
-	return false, nil
-}
-
-// getDumpDestination returns a dump destination corresponding to the input parameters
-func getDumpDestination(path string) mvdata.DataLocation {
-	destLoc := mvdata.NewDataLocation(path, emptyStr)
-
-	switch val := destLoc.(type) {
-	case mvdata.FileDataLocation:
-		if val.Format == mvdata.InvalidDataFormat {
-			cli.PrintErrln(
-				color.RedString("Could not infer type file '%s'\n", path),
-				"File extensions should match supported file types, or should be explicitly defined via the result-format parameter")
-			return nil
-		}
-
-	case mvdata.StreamDataLocation:
-		if val.Format == mvdata.InvalidDataFormat {
-			val = mvdata.StreamDataLocation{Format: mvdata.CsvFile, Reader: os.Stdin, Writer: iohelp.NopWrCloser(cli.CliOut)}
-			destLoc = val
-		} else if val.Format != mvdata.CsvFile && val.Format != mvdata.PsvFile {
-			cli.PrintErrln(color.RedString("Cannot export this format to stdout"))
-			return nil
-		}
-	}
-
-	return destLoc
-}
-
-// validateArgs returns either filename of directory name after checking each cases of user input arguments,
-// handling errors for invalid arguments
-func validateArgs(apr *argparser.ArgParseResults) (string, errhand.VerboseError) {
-	rf, _ := apr.GetValue(FormatFlag)
-	rf = strings.TrimPrefix(rf, ".")
-	fn, fnOk := apr.GetValue(filenameFlag)
-	dn, dnOk := apr.GetValue(directoryFlag)
-
-	if fnOk && dnOk {
-		return emptyStr, errhand.BuildDError("cannot pass both directory and file names").SetPrintUsage().Build()
-	}
-	switch rf {
-	case emptyFileExt, sqlFileExt:
-		if dnOk {
-			return emptyStr, errhand.BuildDError("%s is not supported for %s exports", directoryFlag, sqlFileExt).SetPrintUsage().Build()
-		}
-		return fn, nil
-	case csvFileExt:
-		if fnOk {
-			return emptyStr, errhand.BuildDError("%s is not supported for %s exports", filenameFlag, csvFileExt).SetPrintUsage().Build()
-		}
-		return dn, nil
-	case jsonFileExt:
-		if fnOk {
-			return emptyStr, errhand.BuildDError("%s is not supported for %s exports", filenameFlag, jsonFileExt).SetPrintUsage().Build()
-		}
-		return dn, nil
-	case parquetFileExt:
-		if fnOk {
-			return emptyStr, errhand.BuildDError("%s is not supported for %s exports", filenameFlag, parquetFileExt).SetPrintUsage().Build()
-		}
-		return dn, nil
-	default:
-		return emptyStr, errhand.BuildDError("invalid result format").SetPrintUsage().Build()
-	}
-}
-
-// getDumpArgs returns dumpOptions of result format and dest file location corresponding to the input parameters
-func getDumpOptions(fileName string, rf string) *dumpOptions {
-	fileLoc := getDumpDestination(fileName)
-
-	return &dumpOptions{
-		format: rf,
-		dest:   fileLoc,
-	}
-}
-
-// newTableArgs returns tableOptions of table name and src table location and dest file location
-// corresponding to the input parameters
-func newTableArgs(tblName string, destination mvdata.DataLocation, batched bool) *tableOptions {
-	return &tableOptions{
-		tableName: tblName,
-		dest:      destination,
-		batched:   batched,
-	}
-}
-
-// dumpTables returns nil if all tables is dumped successfully, and it returns err if there is one.
-// It handles only csv and json file types(rf).
-func dumpTables(ctx context.Context, root *doltdb.RootValue, dEnv *env.DoltEnv, force bool, tblNames []string, rf string, dirName string, batched bool) errhand.VerboseError {
-	var fName string
-	if dirName == emptyStr {
-		dirName = fmt.Sprintf("doltdump/")
 	} else {
-		if !strings.HasSuffix(dirName, "/") {
-			dirName = fmt.Sprintf("%s/", dirName)
+		parentRoot, err = doltdb.EmptyRootValue(ctx, ddb.ValueReadWriter())
+		if err != nil {
+			return nil, nil, err
 		}
 	}
+	return parentRoot, cherryRoot, nil
+}
 
-	for _, tbl := range tblNames {
-		fName = fmt.Sprintf("%s%s.%s", dirName, tbl, rf)
-		dumpOpts := getDumpOptions(fName, rf)
+func getRowDiffs(ctx context.Context, td diff.TableDelta) ([]map[string]row.Row, error) {
+	fromTable := td.FromTable
+	toTable := td.ToTable
 
-		fPath, err := checkAndCreateOpenDestFile(ctx, root, dEnv, force, dumpOpts, fName)
-		if err != nil {
-			return err
-		}
-
-		tblOpts := newTableArgs(tbl, dumpOpts.dest, batched)
-
-		err = dumpTable(ctx, dEnv, tblOpts, fPath)
-		if err != nil {
-			return err
-		}
+	if fromTable == nil && toTable == nil {
+		return nil, errhand.BuildDError("error: both tables in tableDelta are nil").Build()
 	}
-	return nil
+
+	fromSch, toSch, err := td.GetSchemas(ctx)
+	if err != nil {
+		return nil, errhand.BuildDError("cannot retrieve schema for table %s", td.ToName).AddCause(err).Build()
+	}
+
+	if td.IsAdd() {
+		fromSch = toSch
+	} else if td.IsDrop() {
+		toSch = fromSch
+	}
+
+	fromRows, toRows, err := td.GetMaps(ctx)
+	if err != nil {
+		return nil, errhand.BuildDError("could not get row data for table %s", td.ToName).AddCause(err).Build()
+	}
+
+	joiner, err := rowconv.NewJoiner(
+		[]rowconv.NamedSchema{
+			{Name: diff.From, Sch: fromSch},
+			{Name: diff.To, Sch: toSch},
+		},
+		map[string]rowconv.ColNamingFunc{diff.To: toNamer, diff.From: fromNamer},
+	)
+
+	if err != nil {
+		return nil, errhand.BuildDError("").AddCause(err).Build()
+	}
+
+	rd := diff.NewRowDiffer(ctx, fromSch, toSch, 1024)
+	if _, ok := rd.(*diff.EmptyRowDiffer); ok {
+		cli.Println("warning: skipping data diff due to primary key set change")
+		return nil, nil
+	}
+	rd.Start(ctx, fromRows, toRows)
+	defer rd.Close()
+
+	src := diff.NewRowDiffSource(rd, joiner, nil)
+	defer src.Close()
+
+	var diffs []map[string]row.Row
+	for {
+		var r row.Row
+		var iterErr error
+
+		r, _, iterErr = src.NextDiff()
+		if iterErr == io.EOF {
+			break
+		} else if iterErr != nil {
+			return nil, iterErr
+		}
+		toAndFromRows, iterErr := joiner.Split(r)
+
+		diffs = append(diffs, toAndFromRows)
+	}
+
+	return diffs, nil
 }
