@@ -23,6 +23,7 @@ import (
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/doltdb/durable"
 	"github.com/dolthub/dolt/go/store/prolly"
+	"github.com/dolthub/dolt/go/store/prolly/tree"
 	"github.com/dolthub/dolt/go/store/val"
 )
 
@@ -32,6 +33,8 @@ type prollyIndexIter struct {
 	idx       DoltIndex
 	indexIter prolly.MapIter
 	primary   prolly.Map
+
+	ns tree.NodeStore
 
 	// pkMap transforms indexRows index keys
 	// into primary index keys
@@ -57,6 +60,7 @@ func newProllyIndexIter(
 	rng prolly.Range,
 	pkSch sql.PrimaryKeySchema,
 	dprimary, dsecondary durable.Index,
+	ns tree.NodeStore,
 ) (prollyIndexIter, error) {
 	secondary := durable.ProllyMapFromIndex(dsecondary)
 	indexIter, err := secondary.IterRange(ctx, rng)
@@ -84,6 +88,7 @@ func newProllyIndexIter(
 		keyMap:    km,
 		valMap:    vm,
 		sqlSch:    pkSch.Schema,
+		ns:        ns,
 	}
 
 	eg.Go(func() error {
@@ -128,7 +133,7 @@ func (p prollyIndexIter) queueRows(ctx context.Context) error {
 
 		r := make(sql.Row, len(p.keyMap)+len(p.valMap))
 		err = p.primary.Get(ctx, pk, func(key, value val.Tuple) error {
-			return p.rowFromTuples(key, value, r)
+			return p.rowFromTuples(ctx, key, value, r)
 		})
 		if err != nil {
 			return err
@@ -142,14 +147,14 @@ func (p prollyIndexIter) queueRows(ctx context.Context) error {
 	}
 }
 
-func (p prollyIndexIter) rowFromTuples(key, value val.Tuple, r sql.Row) (err error) {
+func (p prollyIndexIter) rowFromTuples(ctx context.Context, key, value val.Tuple, r sql.Row) (err error) {
 	keyDesc, valDesc := p.primary.Descriptors()
 
 	for keyIdx, rowIdx := range p.keyMap {
 		if rowIdx == -1 {
 			continue
 		}
-		r[rowIdx], err = GetField(keyDesc, keyIdx, key)
+		r[rowIdx], err = GetField(ctx, keyDesc, keyIdx, key, p.ns)
 		if err != nil {
 			return err
 		}
@@ -158,7 +163,7 @@ func (p prollyIndexIter) rowFromTuples(key, value val.Tuple, r sql.Row) (err err
 		if rowIdx == -1 {
 			continue
 		}
-		r[rowIdx], err = GetField(valDesc, valIdx, value)
+		r[rowIdx], err = GetField(ctx, valDesc, valIdx, value, p.ns)
 		if err != nil {
 			return err
 		}
@@ -208,6 +213,8 @@ type prollyCoveringIndexIter struct {
 	keyDesc   val.TupleDesc
 	valDesc   val.TupleDesc
 
+	ns tree.NodeStore
+
 	// keyMap transforms secondary index key tuples into SQL tuples.
 	// secondary index value tuples are assumed to be empty.
 
@@ -219,7 +226,7 @@ type prollyCoveringIndexIter struct {
 var _ sql.RowIter = prollyCoveringIndexIter{}
 var _ sql.RowIter2 = prollyCoveringIndexIter{}
 
-func newProllyCoveringIndexIter(ctx *sql.Context, idx DoltIndex, rng prolly.Range, pkSch sql.PrimaryKeySchema, indexdata durable.Index) (prollyCoveringIndexIter, error) {
+func newProllyCoveringIndexIter(ctx *sql.Context, idx DoltIndex, rng prolly.Range, pkSch sql.PrimaryKeySchema, indexdata durable.Index, ns tree.NodeStore) (prollyCoveringIndexIter, error) {
 	secondary := durable.ProllyMapFromIndex(indexdata)
 	indexIter, err := secondary.IterRange(ctx, rng)
 	if err != nil {
@@ -242,6 +249,7 @@ func newProllyCoveringIndexIter(ctx *sql.Context, idx DoltIndex, rng prolly.Rang
 		keyMap:    keyMap,
 		valMap:    valMap,
 		sqlSch:    pkSch.Schema,
+		ns:        ns,
 	}
 
 	return iter, nil
@@ -255,7 +263,7 @@ func (p prollyCoveringIndexIter) Next(ctx *sql.Context) (sql.Row, error) {
 	}
 
 	r := make(sql.Row, len(p.keyMap))
-	if err := p.writeRowFromTuples(k, v, r); err != nil {
+	if err := p.writeRowFromTuples(ctx, k, v, r); err != nil {
 		return nil, err
 	}
 
@@ -271,13 +279,13 @@ func (p prollyCoveringIndexIter) Next2(ctx *sql.Context, f *sql.RowFrame) error 
 	return p.writeRow2FromTuples(k, v, f)
 }
 
-func (p prollyCoveringIndexIter) writeRowFromTuples(key, value val.Tuple, r sql.Row) (err error) {
+func (p prollyCoveringIndexIter) writeRowFromTuples(ctx context.Context, key, value val.Tuple, r sql.Row) (err error) {
 	for to := range p.keyMap {
 		from := p.keyMap.MapOrdinal(to)
 		if from == -1 {
 			continue
 		}
-		r[to], err = GetField(p.keyDesc, from, key)
+		r[to], err = GetField(ctx, p.keyDesc, from, key, p.ns)
 		if err != nil {
 			return err
 		}
@@ -288,7 +296,7 @@ func (p prollyCoveringIndexIter) writeRowFromTuples(key, value val.Tuple, r sql.
 		if from == -1 {
 			continue
 		}
-		r[to], err = GetField(p.valDesc, from, value)
+		r[to], err = GetField(ctx, p.valDesc, from, value, p.ns)
 		if err != nil {
 			return err
 		}
@@ -365,6 +373,7 @@ type prollyKeylessIndexIter struct {
 	idx       DoltIndex
 	indexIter prolly.MapIter
 	clustered prolly.Map
+	ns        tree.NodeStore
 
 	// clusteredMap transforms secondary index keys
 	// into clustered index keys
@@ -390,6 +399,7 @@ func newProllyKeylessIndexIter(
 	rng prolly.Range,
 	pkSch sql.PrimaryKeySchema,
 	rows, dsecondary durable.Index,
+	ns tree.NodeStore,
 ) (prollyKeylessIndexIter, error) {
 	secondary := durable.ProllyMapFromIndex(dsecondary)
 	indexIter, err := secondary.IterRange(ctx, rng)
@@ -417,6 +427,7 @@ func newProllyKeylessIndexIter(
 		valueMap:     vm,
 		valueDesc:    valDesc,
 		sqlSch:       pkSch.Schema,
+		ns:           ns,
 	}
 
 	eg.Go(func() error {
@@ -468,7 +479,7 @@ func (p prollyKeylessIndexIter) queueRows(ctx context.Context) error {
 			return err
 		}
 
-		rows, err := p.keylessRowsFromValueTuple(value)
+		rows, err := p.keylessRowsFromValueTuple(ctx, p.ns, value)
 		if err != nil {
 			return err
 		}
@@ -483,7 +494,7 @@ func (p prollyKeylessIndexIter) queueRows(ctx context.Context) error {
 	}
 }
 
-func (p prollyKeylessIndexIter) keylessRowsFromValueTuple(value val.Tuple) (rows []sql.Row, err error) {
+func (p prollyKeylessIndexIter) keylessRowsFromValueTuple(ctx context.Context, ns tree.NodeStore, value val.Tuple) (rows []sql.Row, err error) {
 	card := val.ReadKeylessCardinality(value)
 	rows = make([]sql.Row, card)
 	rows[0] = make(sql.Row, len(p.valueMap)-1) // omit cardinality field
@@ -492,7 +503,7 @@ func (p prollyKeylessIndexIter) keylessRowsFromValueTuple(value val.Tuple) (rows
 		if rowIdx == -1 {
 			continue
 		}
-		rows[0][rowIdx], err = GetField(p.valueDesc, valIdx, value)
+		rows[0][rowIdx], err = GetField(ctx, p.valueDesc, valIdx, value, ns)
 		if err != nil {
 			return nil, err
 		}

@@ -123,8 +123,7 @@ func encodingFromSqlType(typ query.Type) val.Encoding {
 	// todo(andy): replace temp encodings
 	switch typ {
 	case query.Type_BLOB:
-		// todo: temporary hack for enginetests
-		return val.StringEnc
+		return val.BytesAddrEnc
 	case query.Type_TEXT:
 		return val.StringEnc
 	case query.Type_JSON:

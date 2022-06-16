@@ -29,15 +29,16 @@ import (
 	"github.com/dolthub/dolt/go/libraries/doltcore/schema"
 	"github.com/dolthub/dolt/go/libraries/doltcore/table/typed/noms"
 	"github.com/dolthub/dolt/go/store/prolly"
+	"github.com/dolthub/dolt/go/store/prolly/tree"
 	"github.com/dolthub/dolt/go/store/types"
 )
 
-func PartitionIndexedTableRows(ctx *sql.Context, idx sql.Index, part sql.Partition, pkSch sql.PrimaryKeySchema, columns []string) (sql.RowIter, error) {
+func PartitionIndexedTableRows(ctx *sql.Context, idx sql.Index, part sql.Partition, pkSch sql.PrimaryKeySchema, columns []string, ns tree.NodeStore) (sql.RowIter, error) {
 	rp := part.(rangePartition)
 	doltIdx := idx.(DoltIndex)
 
 	if types.IsFormat_DOLT_1(rp.primary.Format()) {
-		return RowIterForProllyRange(ctx, doltIdx, rp.prollyRange, pkSch, columns, rp.primary, rp.secondary)
+		return RowIterForProllyRange(ctx, doltIdx, rp.prollyRange, pkSch, columns, rp.primary, rp.secondary, ns)
 	}
 
 	ranges := []*noms.ReadRange{rp.nomsRange}
@@ -55,25 +56,24 @@ func RowIterForIndexLookup(ctx *sql.Context, t *doltdb.Table, ilu sql.IndexLooku
 
 	if types.IsFormat_DOLT_1(idx.Format()) {
 		// todo(andy)
-		return RowIterForProllyRange(ctx, idx, lookup.prollyRanges[0], pkSch, columns, primary, secondary)
+		return RowIterForProllyRange(ctx, idx, lookup.prollyRanges[0], pkSch, columns, primary, secondary, t.NodeStore())
 	} else {
 		return RowIterForNomsRanges(ctx, idx, lookup.nomsRanges, columns, primary, secondary)
 	}
 }
 
-func RowIterForProllyRange(ctx *sql.Context, idx DoltIndex, r prolly.Range, pkSch sql.PrimaryKeySchema, columns []string, primary, secondary durable.Index) (sql.RowIter2, error) {
+func RowIterForProllyRange(ctx *sql.Context, idx DoltIndex, r prolly.Range, pkSch sql.PrimaryKeySchema, columns []string, primary, secondary durable.Index, ns tree.NodeStore) (sql.RowIter2, error) {
 	if sql.IsKeyless(pkSch.Schema) {
 		// in order to resolve row cardinality, keyless indexes must always perform
 		// an indirect lookup through the clustered index.
-		return newProllyKeylessIndexIter(ctx, idx, r, pkSch, primary, secondary)
+		return newProllyKeylessIndexIter(ctx, idx, r, pkSch, primary, secondary, ns)
 	}
 
 	covers := indexCoversCols(idx, columns)
 	if covers {
-		return newProllyCoveringIndexIter(ctx, idx, r, pkSch, secondary)
-	} else {
-		return newProllyIndexIter(ctx, idx, r, pkSch, primary, secondary)
+		return newProllyCoveringIndexIter(ctx, idx, r, pkSch, secondary, ns)
 	}
+	return newProllyIndexIter(ctx, idx, r, pkSch, primary, secondary, ns)
 }
 
 func RowIterForNomsRanges(ctx *sql.Context, idx DoltIndex, ranges []*noms.ReadRange, columns []string, primary, secondary durable.Index) (sql.RowIter, error) {
