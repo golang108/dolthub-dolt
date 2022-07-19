@@ -1,0 +1,65 @@
+
+{
+  "apiVersion": "batch/v1",
+  "kind": "Job",
+  "metadata": {
+    "name": "vinairachakonda-62f479fa-1658273656",
+    "namespace": "performance-benchmarking"
+  },
+  "spec": {
+    "backoffLimit": 1,
+    "template": {
+      "spec": {
+        "serviceAccountName": "import-benchmarking",
+        "containers": [
+          {
+            "name": "import-benchmarking",
+            "image": "407903926827.dkr.ecr.us-west-2.amazonaws.com/liquidata/import-benchmarking:latest",
+            "resources": {
+              "limits": {
+                "cpu": "7000m"
+              }
+            },
+            "env": [
+              { "name": "GOMAXPROCS", "value": "7" },
+              { "name": "ACTOR", "value": "vinairachakonda" },
+              { "name": "ACTOR_EMAIL", "value": "" },
+              { "name": "REPO_ACCESS_TOKEN", "value": "" }
+            ],
+            "imagePullPolicy": "Always",
+            "args": [
+              "--from-server=dolt",
+              "--from-version=fee28473422d9a574bc16df1f7bf2f9cb230e982",
+              "--to-server=dolt",
+              "--to-version=62f479fa2e2416bd2b9dd45d087c6d780629727e",
+              "--bucket=import-benchmarking-github-actions-results",
+              "--region=us-west-2",
+              "--results-dir=2022/07/19",
+              "--results-prefix=pullRequest/vinairachakonda/vinairachakonda-62f479fa",
+              "--mysql-schema-file=schema.sql",
+              "--nbf=__LD_1__",
+              "--results-schema=/results-schema.sql",
+              "--issue-number=3835",
+              "--output=markdown",
+              "--fileNames=10m-sorted.csv",
+              "--fileNames=10m-random.csv"
+            ]
+          }
+        ],
+        "restartPolicy": "Never",
+        "nodeSelector": {
+          "performance-benchmarking-worker": "true"
+        },
+        "tolerations": [
+          {
+              "effect": "NoSchedule",
+              "key": "dedicated",
+              "operator": "Equal",
+              "value": "performance-benchmarking-worker"
+          }
+        ]
+      }
+    }
+  }
+}
+

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/remotestorage"
 	"github.com/dolthub/dolt/go/libraries/doltcore/row"
@@ -288,7 +289,7 @@ func (iea *BulkImportIEA) MaterializeEdits(ctx context.Context, nbf *types.NomsB
 
 	currMap := iea.rowData
 	for !itr.ReachedEOF() {
-		currMap, _, err = types.ApplyNEdits(ctx, itr, currMap, 256*1024)
+		currMap, _, err = types.ApplyNEdits(ctx, itr, currMap, math.MaxInt64)
 		if err != nil {
 			return types.EmptyMap, err
 		}
