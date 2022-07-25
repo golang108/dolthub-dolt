@@ -4331,7 +4331,7 @@ var UnscopedDiffSystemTableScriptTests = []queries.ScriptTest{
 			"insert into z values (100, 101, 102)",
 			"set @Commit2 = (select DOLT_COMMIT('-am', 'Creating tables z'))",
 
-			"select DOLT_MERGE('branch1')",
+			"select DOLT_MERGE('branch1', '--no-commit')",
 			"set @Commit3 = (select DOLT_COMMIT('-am', 'Merging branch1 into branch2'))",
 		},
 		Assertions: []queries.ScriptTestAssertion{

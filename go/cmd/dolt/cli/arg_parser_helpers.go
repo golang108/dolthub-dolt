@@ -98,6 +98,8 @@ const (
 	RemoteParam      = "remote"
 	BranchParam      = "branch"
 	TrackFlag        = "track"
+	CommitFlag       = "commit"
+	NoCommitFlag     = "no-commit"
 )
 
 const (
@@ -132,6 +134,8 @@ func CreateMergeArgParser() *argparser.ArgParser {
 	ap.SupportsFlag(SquashParam, "", "Merges changes to the working set without updating the commit history")
 	ap.SupportsString(MessageArg, "m", "msg", "Use the given {{.LessThan}}msg{{.GreaterThan}} as the commit message.")
 	ap.SupportsFlag(AbortParam, "", mergeAbortDetails)
+	ap.SupportsFlag(CommitFlag, "", "Perform the merge and commit the result.")
+	ap.SupportsFlag(NoCommitFlag, "", "Perform the merge and stop just before creating a merge commit.")
 	return ap
 }
 
