@@ -41,16 +41,11 @@ const (
 	deleteDelta = int(numRowsPerTable * .10)
 	updateDelta = int(numRowsPerTable * .20)
 
-	// TODO: Model schema as a memory table and generate shit accordingly
-
-	schemaString      = "(pk int AUTO_INCREMENT PRIMARY KEY, c1 bigint DEFAULT 0, c2 char(1) DEFAULT NULL)"
-	dummySchemaString = "(pk int PRIMARY KEY, c1 bigint DEFAULT 0, c2 char(1) DEFAULT NULL)"
+	schemaString = "(pk int AUTO_INCREMENT PRIMARY KEY, c1 bigint DEFAULT 0, c2 char(1) DEFAULT NULL)"
 )
 
 // This is file created to generate a testing database used to evaluate the performance of system tables.
 // TODO: Can also fork the mysql_random_data_loader and allow for package level random data generation
-// TODO: Possible speed optimizations with AUTOCOMMIT
-// TODO: Maybe schema as array
 func main() {
 	// 1. Initialize a connection with a dolt server and load in 100 tables with a predefined schema
 	db, err := getDatabase()
@@ -233,6 +228,7 @@ func deleteOperation(ctx context.Context, db *sql.DB, tableName string) error {
 	return nil
 }
 
+// updateOperation generated a random set of primary keys to update with generated data from mysql_random_data_load
 func updateOperation(ctx context.Context, db *sql.DB, tableName string) error {
 	// Create a temporary table without the primary key
 	conn, err := db.Conn(ctx)
@@ -242,11 +238,12 @@ func updateOperation(ctx context.Context, db *sql.DB, tableName string) error {
 
 	defer conn.Close()
 
-	// TODO: Fix like bug
-	_, err = conn.ExecContext(ctx, fmt.Sprintf("CREATE TABLE dummyTable%s", dummySchemaString))
+	_, err = conn.ExecContext(ctx, fmt.Sprintf("CREATE TABLE dummyTable LIKE %s", tableName))
 	if err != nil {
 		return err
 	}
+
+	defer conn.ExecContext(ctx, "DROP TABLE IF EXISTS dummyTable")
 
 	// generate data for that temporary table
 	err = runMySQLRandomDataLoad(database, "dummyTable", updateDelta)
@@ -254,32 +251,16 @@ func updateOperation(ctx context.Context, db *sql.DB, tableName string) error {
 		return err
 	}
 
-	// update the primary keys with the random distribution
-	_, err = conn.ExecContext(ctx, "ALTER TABLE dummyTable ADD COLUMN pk2 int")
+	randomPks, currentPks, err := getCurrentAndRandomPks(ctx, conn, tableName)
 	if err != nil {
 		return err
 	}
 
-	_, err = conn.ExecContext(ctx, fmt.Sprintf("update dummyTable, (select pk from %s order by RAND() LIMIT %d ) as pks set dummyTable.pk2 = pks.pk;", tableName, updateDelta))
-	if err != nil {
-		return err
-	}
+	for i, cpk := range currentPks {
+		rpk := randomPks[i]
 
-	// update the primary keys with the random distribution
-	_, err = conn.ExecContext(ctx, "ALTER TABLE dummyTable drop primary key")
-	if err != nil {
-		return err
-	}
-
-	// update dummyTable, (select pk from test0 order by RAND() LIMIT 20000) as pks set dummyTable.pk = pks.pk;
-	//_, err = conn.ExecContext(ctx, fmt.Sprintf("UPDATE dummyTable SET pk2 = (SELECT pk FROM %s ORDER BY RAND() LIMIT %d)", tableName, updateDelta))
-	//if err != nil {
-	//	return err
-	//}
-	//
-	_, err = conn.ExecContext(ctx, "UPDATE IGNORE dummyTable SET pk = pk2")
-	if err != nil {
-		return err
+		// TODO: Not perfect but good enough to simulate a decent amount of updates
+		conn.ExecContext(ctx, fmt.Sprintf("UPDATE dummyTable set pk = %d where pk = %d", rpk, cpk)) // ignore any duplicate key errors. Should probably support update ignore
 	}
 
 	// Simulate the update of a table with an UPDATE JOIN query
@@ -288,10 +269,52 @@ func updateOperation(ctx context.Context, db *sql.DB, tableName string) error {
 		return err
 	}
 
-	_, err = conn.ExecContext(ctx, "DROP TABLE IF EXISTS dummyTable")
+	return nil
+}
+
+// getCurrentAndRandomPks is a utility that return the currentPks from dummyTable and randomly generated pks from the update table.
+func getCurrentAndRandomPks(ctx context.Context, conn *sql.Conn, tableName string) ([]int, []int, error) {
+	// Select 20000 random rows from the original table
+	var randomPks []int
+	rows, err := conn.QueryContext(ctx, fmt.Sprintf("SELECT pk FROM %s order by RAND() LIMIT %d", tableName, updateDelta))
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
-	return nil
+	for rows.Next() {
+		var pk int
+		if err := rows.Scan(&pk); err != nil {
+			return nil, nil, err
+		}
+
+		randomPks = append(randomPks, pk)
+	}
+
+	err = rows.Close()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Update pk2 with the relevant row value
+	var currentPks []int
+	rows, err = conn.QueryContext(ctx, "SELECT pk FROM dummyTable")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for rows.Next() {
+		var pk int
+		if err := rows.Scan(&pk); err != nil {
+			return nil, nil, err
+		}
+
+		currentPks = append(currentPks, pk)
+	}
+
+	err = rows.Close()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return randomPks, currentPks, nil
 }
