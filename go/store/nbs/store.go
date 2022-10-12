@@ -550,6 +550,11 @@ func newLocalStore(ctx context.Context, nbfVerStr string, dir string, memTableSi
 		return nil, err
 	}
 
+	nbs.tables, err = newJournalTableSet(ctx, dir, nbs.tables)
+	if err != nil {
+		return nil, err
+	}
+
 	return nbs, nil
 }
 

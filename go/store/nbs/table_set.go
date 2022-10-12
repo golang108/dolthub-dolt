@@ -35,12 +35,17 @@ import (
 const concurrentCompactions = 5
 
 func newTableSet(p tablePersister, q MemoryQuotaProvider) tableSet {
-	return tableSet{p: p, q: q, rl: make(chan struct{}, concurrentCompactions)}
+	return tableSet{
+		p:  p,
+		q:  q,
+		rl: make(chan struct{}, concurrentCompactions),
+	}
 }
 
 // tableSet is an immutable set of persistable chunkSources.
 type tableSet struct {
 	novel, upstream chunkSources
+	journal         appendingChunkSource
 	p               tablePersister
 	q               MemoryQuotaProvider
 	rl              chan struct{}
@@ -360,6 +365,10 @@ func (ts tableSet) Upstream() int {
 // Prepend adds a memTable to an existing tableSet, compacting |mt| and
 // returning a new tableSet with newly compacted table added.
 func (ts tableSet) Prepend(ctx context.Context, mt *memTable, stats *Stats) tableSet {
+	if ts.journal != nil && ts.journal.append(ctx, mt, ts, stats) {
+		return ts // appended |mt| to ts.journal
+	}
+
 	newTs := tableSet{
 		novel:    make(chunkSources, len(ts.novel)+1),
 		upstream: make(chunkSources, len(ts.upstream)),
