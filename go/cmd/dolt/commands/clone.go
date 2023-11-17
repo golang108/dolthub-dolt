@@ -103,7 +103,7 @@ func clone(ctx context.Context, apr *argparser.ArgParseResults, dEnv *env.DoltEn
 		return verr
 	}
 
-	dEnv.UserPassConfig, verr = getRemoteUserAndPassConfig(apr)
+	*dEnv.UserPassConfig, verr = getRemoteUserAndPassConfig(apr)
 	if verr != nil {
 		return verr
 	}

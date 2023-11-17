@@ -111,7 +111,10 @@ func (p GRPCDialProvider) getRPCCreds(endpoint string) (credentials.PerRPCCreden
 	}
 
 	if p.dEnv.UserPassConfig != nil {
-		return p.dEnv.UserPassConfig.RPCCreds(), nil
+		config := *p.dEnv.UserPassConfig
+		if config != nil {
+			return config.RPCCreds(), nil
+		}
 	}
 
 	dCreds, valid, err := p.dEnv.UserDoltCreds()

@@ -80,6 +80,14 @@ func (cmd FetchCmd) Exec(ctx context.Context, commandStr string, args []string, 
 	help, usage := cli.HelpAndUsagePrinters(cli.CommandDocsForCommandString(commandStr, fetchDocs, ap))
 	apr := cli.ParseArgsOrDie(ap, args, help)
 
+	if dEnv != nil {
+		creds, verr := getRemoteUserAndPassConfig(apr)
+		if verr != nil {
+			return HandleVErrAndExitCode(verr, usage)
+		}
+		*dEnv.UserPassConfig = creds
+	}
+
 	queryist, sqlCtx, closeFunc, err := cliCtx.QueryEngine(ctx)
 	if err != nil {
 		cli.PrintErrln(err)

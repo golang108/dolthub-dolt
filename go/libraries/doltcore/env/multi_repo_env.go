@@ -89,6 +89,7 @@ func MultiEnvForDirectory(
 		dbName = dbfactory.DirToDBName(envName)
 
 		newDEnv = Load(ctx, GetCurrentUserHomeDir, dataDirFS, doltdb.LocalDirDoltDB, version)
+		newDEnv.UserPassConfig = dEnv.UserPassConfig
 	}
 
 	mrEnv := &MultiRepoEnv{
