@@ -42,209 +42,319 @@ type replicatingMySQLDbPersister struct {
 	current  []byte
 	version  uint32
 	replicas []*mysqlDbReplica
+	role     Role
+	started  bool
 
 	mu sync.Mutex
 }
 
 type mysqlDbReplica struct {
-	shutdown bool
-	role     Role
-
-	contents []byte
-	version  uint32
-
-	replicatedVersion uint32
-	backoff           backoff.BackOff
-	nextAttempt       time.Time
-
 	client *replicationServiceClient
 	lgr    *logrus.Entry
+	wg     sync.WaitGroup
 
-	waitNotify func()
+	callReqCh  chan MakeUpdateUsersAndGrantsCallRequest
+	callRespCh chan MakeUpdateUsersAndGrantsCallResponse
 
-	progressNotifier        ProgressNotifier
-	fastFailReplicationWait bool
+	updateReqCh          chan UpdateMySQLDbRequest
+	setFastFailWaitReqCh chan SetFastFailWaitRequest
+	setRoleReqCh         chan SetRoleRequest
+	waitNotifyReqCh      chan SetWaitNotifyRequest
+	doneCh               chan struct{}
+}
 
-	mu   sync.Mutex
-	cond *sync.Cond
+type UpdateMySQLDbRequest struct {
+	Contents []byte
+	Version  uint32
+	RespCh   chan UpdateMySQLDbResponse
+}
+
+type UpdateMySQLDbResponse struct {
+	WaitF func(context.Context) error
+}
+
+type SetFastFailWaitRequest struct {
+	Value bool
+}
+
+type IsCaughtUpRequest struct {
+	RespCh chan bool
+}
+
+type MakeUpdateUsersAndGrantsCallRequest struct {
+	Contents []byte
+	Version  uint32
+}
+
+type MakeUpdateUsersAndGrantsCallResponse struct {
+	Err     error
+	Version uint32
+}
+
+type SetWaitNotifyRequest struct {
+	NotifyF func(caughtUp bool)
+	RespCh  chan bool
+}
+
+type SetRoleRequest struct {
+	Role Role
 }
 
 func (r *mysqlDbReplica) UpdateMySQLDb(ctx context.Context, contents []byte, version uint32) func(context.Context) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.lgr.Infof("mysqlDbReplica got new contents at version %d", version)
-	r.contents = contents
-	r.version = version
-	r.nextAttempt = time.Time{}
-	r.backoff.Reset()
-	r.cond.Broadcast()
-
-	if r.fastFailReplicationWait {
-		remote := r.client.remote
-		return func(ctx context.Context) error {
-			return fmt.Errorf("circuit breaker for replication to %s/mysql is open. this update to users and grants did not necessarily replicate successfully.", remote)
-		}
-	} else {
-		w := r.progressNotifier.Wait()
-		return func(ctx context.Context) error {
-			err := w(ctx)
-			if err != nil && errors.Is(err, doltdb.ErrReplicationWaitFailed) {
-				r.setFastFailReplicationWait(true)
-			}
-			return err
-		}
+	respCh := make(chan UpdateMySQLDbResponse, 1)
+	req := UpdateMySQLDbRequest{
+		Contents: contents,
+		Version:  version,
+		RespCh:   respCh,
 	}
+	r.updateReqCh <- req
+	resp := <-respCh
+	return resp.WaitF
 }
 
-func (r *mysqlDbReplica) setFastFailReplicationWait(v bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.fastFailReplicationWait = v
-}
-
-func (r *mysqlDbReplica) Run() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.lgr.Tracef("mysqlDbReplica[%s]: running", r.client.remote)
-	for !r.shutdown {
-		if r.role != RolePrimary {
-			r.wait()
-			continue
-		}
-		if r.version == 0 {
-			r.wait()
-			continue
-		}
-		if r.replicatedVersion == r.version {
-			r.wait()
-			continue
-		}
-		if r.nextAttempt.After(time.Now()) {
-			r.wait()
-			continue
-		}
-		if len(r.contents) > 0 {
-			// We do not call into the client with the lock held
-			// here.  Client interceptors could call
-			// `controller.setRoleAndEpoch()`, which will call back
-			// into this replica with the new role. We need to
-			// release this lock in order to avoid deadlock.
-			contents := r.contents
-			client := r.client.client
-			version := r.version
-			attempt := r.progressNotifier.BeginAttempt()
-			r.mu.Unlock()
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			_, err := client.UpdateUsersAndGrants(ctx, &replicationapi.UpdateUsersAndGrantsRequest{
-				SerializedContents: contents,
-			})
-			cancel()
-			r.mu.Lock()
-			if err != nil {
-				r.progressNotifier.RecordFailure(attempt)
-				r.lgr.Warnf("mysqlDbReplica[%s]: error replicating users and grants. backing off. %v", r.client.remote, err)
-				r.nextAttempt = time.Now().Add(r.backoff.NextBackOff())
-				next := r.nextAttempt
-				go func() {
-					<-time.After(time.Until(next))
-					r.mu.Lock()
-					defer r.mu.Unlock()
-					if r.nextAttempt == next {
-						r.nextAttempt = time.Time{}
-					}
-					r.cond.Broadcast()
-				}()
-				continue
-			}
-			r.progressNotifier.RecordSuccess(attempt)
-			r.fastFailReplicationWait = false
-			r.backoff.Reset()
-			r.lgr.Debugf("mysqlDbReplica[%s]: sucessfully replicated users and grants at version %d.", r.client.remote, version)
-			r.replicatedVersion = version
-		} else {
-			r.lgr.Debugf("mysqlDbReplica[%s]: not replicating empty users and grants at version %d.", r.client.remote, r.version)
-			r.replicatedVersion = r.version
-		}
-	}
-}
-
-func (r *mysqlDbReplica) isCaughtUp() bool {
-	return r.version == r.replicatedVersion || r.role != RolePrimary
-}
-
-func (r *mysqlDbReplica) setWaitNotify(notify func()) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if notify != nil {
-		if r.waitNotify != nil {
-			return false
-		}
-		notify()
-	}
-	r.waitNotify = notify
-	return true
-}
-
-func (r *mysqlDbReplica) wait() {
-	if r.waitNotify != nil {
-		r.waitNotify()
-	}
-	r.lgr.Infof("mysqlDbReplica waiting...")
-	if r.isCaughtUp() {
-		attempt := r.progressNotifier.BeginAttempt()
-		r.progressNotifier.RecordSuccess(attempt)
-	}
-	r.cond.Wait()
+func (r *mysqlDbReplica) Run(role Role, version uint32, contents []byte) {
+	r.wg.Add(2)
+	go func() {
+		defer r.wg.Done()
+		r.runReqRespLoop(role, version, contents)
+	}()
+	go func() {
+		defer r.wg.Done()
+		r.runCallLoop()
+	}()
+	r.wg.Wait()
 }
 
 func (r *mysqlDbReplica) GracefulStop() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.shutdown = true
-	r.cond.Broadcast()
+	close(r.doneCh)
+	r.wg.Wait()
+}
+
+func (r *mysqlDbReplica) runReqRespLoop(role Role, version uint32, contents []byte) {
+	var attempt *Attempt
+	var replicatedVersion uint32
+	var waitNotify func(caughtUp bool)
+	var progressNotifier ProgressNotifier
+	var fastFailReplicationWait bool
+	var nextAttempt time.Time
+
+	timer := time.NewTimer(0)
+	timerActive := true
+
+	backoff := backoff.NewExponentialBackOff()
+	backoff.InitialInterval = time.Second
+	backoff.MaxInterval = time.Minute
+	backoff.MaxElapsedTime = 0
+
+	for {
+		sleepDuration := nextAttempt.Sub(time.Now())
+		needsToSleep := sleepDuration > 0
+
+		hasSomethingToReplicate := role == RolePrimary && version != 0 && replicatedVersion != version
+
+		wantsToReplicate := hasSomethingToReplicate && !needsToSleep
+
+		isCaughtUp := !hasSomethingToReplicate
+
+		if wantsToReplicate && len(contents) == 0 {
+			r.lgr.Debugf("mysqlDbReplica[%s]: not replicating empty users and grants at version %d.", r.client.remote, version)
+			replicatedVersion = version
+
+			continue
+		}
+
+		callReq := MakeUpdateUsersAndGrantsCallRequest{
+			Contents: contents,
+			Version:  version,
+		}
+		var callReqCh chan MakeUpdateUsersAndGrantsCallRequest
+		if wantsToReplicate {
+			callReqCh = r.callReqCh
+		} else {
+			if waitNotify != nil {
+				waitNotify(isCaughtUp)
+			}
+			r.lgr.Infof("mysqlDbReplica waiting...")
+			if isCaughtUp {
+				attempt := progressNotifier.BeginAttempt()
+				progressNotifier.RecordSuccess(attempt)
+			}
+		}
+
+		var sleepCh <-chan time.Time
+		if needsToSleep {
+			if timerActive && !timer.Stop() {
+				<-timer.C
+			}
+			timerActive = true
+			timer.Reset(sleepDuration)
+			sleepCh = timer.C
+		}
+
+		select {
+		case req := <-r.updateReqCh:
+			r.lgr.Infof("mysqlDbReplica got new contents at version %d", req.Version)
+			contents = req.Contents
+			version = req.Version
+			nextAttempt = time.Time{}
+			backoff.Reset()
+			var resp UpdateMySQLDbResponse
+			if fastFailReplicationWait {
+				remote := r.client.remote
+				resp.WaitF = func(ctx context.Context) error {
+					return fmt.Errorf("circuit breaker for replication to %s/mysql is open. this update to users and grants did not necessarily replicate successfully.", remote)
+				}
+			} else {
+				w := progressNotifier.Wait()
+
+				resp.WaitF = func(ctx context.Context) error {
+					err := w(ctx)
+					if err != nil && errors.Is(err, doltdb.ErrReplicationWaitFailed) {
+						r.setFastFailReplicationWait(true)
+					}
+					return err
+				}
+			}
+			req.RespCh <- resp
+		case callReqCh <- callReq:
+			attempt = progressNotifier.BeginAttempt()
+		case callResp := <-r.callRespCh:
+			if callResp.Err != nil {
+				progressNotifier.RecordFailure(attempt)
+				r.lgr.Warnf("mysqlDbReplica[%s]: error replicating users and grants. backing off. %v", r.client.remote, callResp.Err)
+				nextAttempt = time.Now().Add(backoff.NextBackOff())
+			} else {
+				progressNotifier.RecordSuccess(attempt)
+				fastFailReplicationWait = false
+				backoff.Reset()
+				r.lgr.Debugf("mysqlDbReplica[%s]: sucessfully replicated users and grants at version %d.", r.client.remote, callResp.Version)
+				replicatedVersion = callResp.Version
+			}
+			attempt = nil
+		case req := <-r.setFastFailWaitReqCh:
+			fastFailReplicationWait = req.Value
+		case req := <-r.waitNotifyReqCh:
+			if req.NotifyF != nil && waitNotify != nil {
+				req.RespCh <- false
+			} else {
+				waitNotify = req.NotifyF
+				if waitNotify != nil {
+					waitNotify(isCaughtUp)
+				}
+				req.RespCh <- true
+			}
+		case req := <-r.setRoleReqCh:
+			role = req.Role
+			nextAttempt = time.Time{}
+			backoff.Reset()
+		case <-sleepCh:
+			timerActive = false
+		case <-r.doneCh:
+			return
+		}
+	}
+
+}
+
+func (r *mysqlDbReplica) setFastFailReplicationWait(v bool) {
+	r.setFastFailWaitReqCh <- SetFastFailWaitRequest{
+		Value: v,
+	}
+}
+
+func (r *mysqlDbReplica) setWaitNotify(callback func(bool)) bool {
+	req := SetWaitNotifyRequest{
+		NotifyF: callback,
+		RespCh:  make(chan bool, 1),
+	}
+	r.waitNotifyReqCh <- req
+	return <-req.RespCh
 }
 
 func (r *mysqlDbReplica) setRole(role Role) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.role = role
-	r.nextAttempt = time.Time{}
-	r.backoff.Reset()
-	r.cond.Broadcast()
+	r.setRoleReqCh <- SetRoleRequest{role}
+}
+
+func (r *mysqlDbReplica) runCallLoop() {
+	for {
+		var req MakeUpdateUsersAndGrantsCallRequest
+		select {
+		case <-r.doneCh:
+			return
+		case req = <-r.callReqCh:
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		_, err := r.client.client.UpdateUsersAndGrants(ctx, &replicationapi.UpdateUsersAndGrantsRequest{
+			SerializedContents: req.Contents,
+		})
+		cancel()
+
+		resp := MakeUpdateUsersAndGrantsCallResponse{
+			Err:     err,
+			Version: req.Version,
+		}
+
+		select {
+		case <-r.doneCh:
+			return
+		case r.callRespCh <- resp:
+		}
+	}
 }
 
 func (p *replicatingMySQLDbPersister) setRole(role Role) {
-	for _, r := range p.replicas {
-		r.setRole(role)
-	}
 	p.mu.Lock()
+	p.role = role
 	// If we are transitioning to primary and we are already initialized,
 	// then we reload data so that we have the most recent persisted users
 	// and grants to replicate.
 	needsLoad := p.version != 0 && role == RolePrimary
+	started := p.started
 	p.mu.Unlock()
+	if started {
+		for _, r := range p.replicas {
+			r.setRole(role)
+		}
+	}
 	if needsLoad {
 		p.LoadData(context.Background())
 	}
 }
 
 func (p *replicatingMySQLDbPersister) Run() {
+	p.mu.Lock()
+	role := p.role
+	version := p.version
+	contents := p.current
+	started := p.started
+	p.started = true
+	p.mu.Unlock()
+	if started {
+		panic("cannot run replicatingMySQLDbPersister twice")
+	}
 	var wg sync.WaitGroup
 	for _, r := range p.replicas {
 		r := r
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r.Run()
+			r.Run(role, version, contents)
 		}()
 	}
 	wg.Wait()
 }
 
 func (p *replicatingMySQLDbPersister) GracefulStop() {
+	var wg sync.WaitGroup
+	wg.Add(len(p.replicas))
 	for _, r := range p.replicas {
-		r.GracefulStop()
+		go func() {
+			defer wg.Done()
+			r.GracefulStop()
+		}()
 	}
+	wg.Wait()
 }
 
 func (p *replicatingMySQLDbPersister) Persist(ctx *sql.Context, data []byte) error {
@@ -275,8 +385,10 @@ func (p *replicatingMySQLDbPersister) LoadData(ctx context.Context) ([]byte, err
 	if err == nil {
 		p.current = ret
 		p.version += 1
-		for _, r := range p.replicas {
-			r.UpdateMySQLDb(ctx, p.current, p.version)
+		if p.started {
+			for _, r := range p.replicas {
+				r.UpdateMySQLDb(ctx, p.current, p.version)
+			}
 		}
 	}
 	return ret, err
@@ -294,17 +406,12 @@ func (p *replicatingMySQLDbPersister) waitForReplication(timeout time.Duration) 
 	}
 	var wg sync.WaitGroup
 	wg.Add(len(replicas))
-	for li, lr := range replicas {
+	for li, r := range replicas {
 		i := li
-		r := lr
-		ok := r.setWaitNotify(func() {
-			// called with r.mu locked.
-			if !res[i].caughtUp {
-				if r.isCaughtUp() {
-					res[i].caughtUp = true
-					wg.Done()
-				} else {
-				}
+		ok := r.setWaitNotify(func(caughtUp bool) {
+			if !res[i].caughtUp && caughtUp {
+				res[i].caughtUp = true
+				wg.Done()
 			}
 		})
 		if !ok {

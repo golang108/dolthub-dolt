@@ -189,16 +189,17 @@ func NewController(lgr *logrus.Logger, cfg Config, pCfg config.ReadWriteConfig) 
 	}
 	ret.mysqlDbReplicas = make([]*mysqlDbReplica, len(ret.replicationClients))
 	for i := range ret.mysqlDbReplicas {
-		bo := backoff.NewExponentialBackOff()
-		bo.InitialInterval = time.Second
-		bo.MaxInterval = time.Minute
-		bo.MaxElapsedTime = 0
 		ret.mysqlDbReplicas[i] = &mysqlDbReplica{
-			lgr:     lgr.WithFields(logrus.Fields{}),
-			client:  ret.replicationClients[i],
-			backoff: bo,
+			lgr:                  lgr.WithFields(logrus.Fields{}),
+			client:               ret.replicationClients[i],
+			updateReqCh:          make(chan UpdateMySQLDbRequest),
+			callReqCh:            make(chan MakeUpdateUsersAndGrantsCallRequest),
+			callRespCh:           make(chan MakeUpdateUsersAndGrantsCallResponse),
+			setFastFailWaitReqCh: make(chan SetFastFailWaitRequest),
+			setRoleReqCh:         make(chan SetRoleRequest),
+			waitNotifyReqCh:      make(chan SetWaitNotifyRequest),
+			doneCh:               make(chan struct{}),
 		}
-		ret.mysqlDbReplicas[i].cond = sync.NewCond(&ret.mysqlDbReplicas[i].mu)
 	}
 
 	ret.outstandingDropDatabases = make(map[string]*databaseDropReplication)
