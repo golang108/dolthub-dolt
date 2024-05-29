@@ -23,6 +23,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/dolthub/gozstd"
 	"golang.org/x/sync/errgroup"
@@ -39,6 +40,7 @@ func BuildArchive(ctx context.Context, cs chunks.ChunkStore, dagGroups *ChunkRel
 		oldgen := gs.oldGen.tables.upstream
 
 		for tf, ogcs := range oldgen {
+			altCtx, _ := context.WithTimeout(ctx, 1000*time.Minute)
 			// NM4 - We should probably provide a way to pick a particular table file to build an archive for.
 
 			idx, err := ogcs.index()
@@ -48,7 +50,7 @@ func BuildArchive(ctx context.Context, cs chunks.ChunkStore, dagGroups *ChunkRel
 
 			archivePath := ""
 			archiveName := hash.Hash{}
-			archivePath, archiveName, err = convertTableFileToArchive(ctx, ogcs, idx, dagGroups, outPath)
+			archivePath, archiveName, err = convertTableFileToArchive(altCtx, ogcs, idx, dagGroups, outPath)
 			if err != nil {
 				return err
 			}
@@ -70,7 +72,7 @@ func BuildArchive(ctx context.Context, cs chunks.ChunkStore, dagGroups *ChunkRel
 					newSpecs = append(newSpecs, tableSpec{archiveName, spec.chunkCount})
 				}
 			}
-			err = gs.oldGen.swapTables(ctx, newSpecs)
+			err = gs.oldGen.swapTables(altCtx, newSpecs)
 			if err != nil {
 				return err
 			}
