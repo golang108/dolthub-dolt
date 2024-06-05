@@ -34,6 +34,9 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
+	"github.com/dolthub/dolt/go/store/blobstore"
+	"github.com/dolthub/dolt/go/store/chunks"
+	"github.com/dolthub/dolt/go/store/hash"
 	"github.com/dustin/go-humanize"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/oracle/oci-go-sdk/v65/common"
@@ -43,10 +46,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
-
-	"github.com/dolthub/dolt/go/store/blobstore"
-	"github.com/dolthub/dolt/go/store/chunks"
-	"github.com/dolthub/dolt/go/store/hash"
 )
 
 var (
@@ -834,7 +833,16 @@ func (nbs *NomsBlockStore) errorIfDangling(root hash.Hash, checker refCheck) err
 	return nil
 }
 
+var GetDuration int64
+var GetCount uint64
+
 func (nbs *NomsBlockStore) Get(ctx context.Context, h hash.Hash) (chunks.Chunk, error) {
+	start := time.Now()
+	defer func() {
+		atomic.AddInt64(&GetDuration, int64(time.Since(start)))
+		atomic.AddUint64(&GetCount, 1)
+	}()
+
 	ctx, span := tracer.Start(ctx, "nbs.Get")
 	defer span.End()
 
@@ -880,7 +888,16 @@ func (nbs *NomsBlockStore) Get(ctx context.Context, h hash.Hash) (chunks.Chunk, 
 	return chunks.EmptyChunk, nil
 }
 
+var GetManyDuration int64
+var GetManyCount uint64
+
 func (nbs *NomsBlockStore) GetMany(ctx context.Context, hashes hash.HashSet, found func(context.Context, *chunks.Chunk)) error {
+	start := time.Now()
+	defer func() {
+		atomic.AddInt64(&GetManyDuration, int64(time.Since(start)))
+		atomic.AddUint64(&GetManyCount, 1)
+	}()
+
 	ctx, span := tracer.Start(ctx, "nbs.GetMany", trace.WithAttributes(attribute.Int("num_hashes", len(hashes))))
 	span.End()
 	return nbs.getManyWithFunc(ctx, hashes, func(ctx context.Context, cr chunkReader, eg *errgroup.Group, reqs []getRecord, stats *Stats) (bool, error) {
@@ -984,7 +1001,16 @@ func (nbs *NomsBlockStore) Count() (uint32, error) {
 	return count + tablesCount, nil
 }
 
+var HasDuration int64
+var HasCount uint64
+
 func (nbs *NomsBlockStore) Has(ctx context.Context, h hash.Hash) (bool, error) {
+	start := time.Now()
+	defer func() {
+		atomic.AddInt64(&HasDuration, int64(time.Since(start)))
+		atomic.AddUint64(&HasCount, 1)
+	}()
+
 	t1 := time.Now()
 	defer func() {
 		nbs.stats.HasLatency.SampleTimeSince(t1)
@@ -1023,7 +1049,16 @@ func (nbs *NomsBlockStore) Has(ctx context.Context, h hash.Hash) (bool, error) {
 	return has, nil
 }
 
+var HasManyDuration int64
+var HasManyCount uint64
+
 func (nbs *NomsBlockStore) HasMany(ctx context.Context, hashes hash.HashSet) (hash.HashSet, error) {
+	start := time.Now()
+	defer func() {
+		atomic.AddInt64(&HasManyDuration, int64(time.Since(start)))
+		atomic.AddUint64(&HasManyCount, 1)
+	}()
+
 	if hashes.Size() == 0 {
 		return nil, nil
 	}

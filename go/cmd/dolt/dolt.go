@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"math/rand"
 	"net/http"
 	_ "net/http/pprof"
@@ -243,7 +244,35 @@ const traceProf = "trace"
 const featureVersionFlag = "--feature-version"
 
 func main() {
-	os.Exit(runMain())
+	status := runMain()
+
+	statFile, err := os.OpenFile("/tmp/stats.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatalf("Failed to open stats file: %v", err)
+	}
+
+	logger := log.New(statFile, "", log.LstdFlags)
+
+	logger.Printf("--------------------------------------------\n")
+	if nbs.GetManyCount > 0 {
+		logger.Printf("GetManyDuration: %v\n", time.Duration(nbs.GetManyDuration))
+		logger.Printf("GetManyCalls: %v\n", nbs.GetManyCount)
+	}
+	if nbs.GetCount > 0 {
+		logger.Printf("GetDuration: %v\n", time.Duration(nbs.GetDuration))
+		logger.Printf("GetCalls: %v\n", nbs.GetCount)
+	}
+	if nbs.HasManyCount > 0 {
+		logger.Printf("HasManyDuration: %v\n", time.Duration(nbs.HasManyDuration))
+		logger.Printf("HasManyCalls: %v\n", nbs.HasManyCount)
+	}
+	if nbs.HasCount > 0 {
+		logger.Printf("HasDuration: %v\n", time.Duration(nbs.HasDuration))
+		logger.Printf("HasCalls: %v\n", nbs.HasCount)
+	}
+
+	_ = statFile.Close()
+	os.Exit(status)
 }
 
 func runMain() int {
