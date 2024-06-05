@@ -261,6 +261,9 @@ func main() {
 	if nbs.GetCount > 0 {
 		logger.Printf("GetDuration: %v\n", time.Duration(nbs.GetDuration))
 		logger.Printf("GetCalls: %v\n", nbs.GetCount)
+
+		logger.Printf("DictionaryCacheHit: %v\n", nbs.DictionaryCacheHit)
+		logger.Printf("DictionaryCacheMiss: %v\n", nbs.DictionaryCacheMiss)
 	}
 	if nbs.HasManyCount > 0 {
 		logger.Printf("HasManyDuration: %v\n", time.Duration(nbs.HasManyDuration))
