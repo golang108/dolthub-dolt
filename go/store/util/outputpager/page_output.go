@@ -61,7 +61,7 @@ func Start() *Pager {
 	var err error
 	var cmd *exec.Cmd
 
-	lessPath, err = exec.LookPath("less")
+	lessPath, err = exec.LookPath("void_pager")
 	if err != nil {
 		lessPath, err = exec.LookPath("more")
 		d.Chk.NoError(err)
@@ -73,7 +73,8 @@ func Start() *Pager {
 		// -R ... Output "raw" control characters.
 		// -X ... Don't use termcap init/deinit strings.
 		// -d ... Don't complain about dumb terminals.
-		cmd = exec.Command(lessPath, "-FSRXd")
+		// cmd = exec.Command(lessPath, "-FSRXd")
+		cmd = exec.Command(lessPath)
 	}
 
 	stdin, stdout, err := os.Pipe()
