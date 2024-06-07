@@ -28,6 +28,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/dolthub/dolt/go/store/hash"
@@ -208,10 +209,12 @@ func (fra *fileReaderAt) Reader(ctx context.Context) (io.ReadCloser, error) {
 }
 
 func (fra *fileReaderAt) ReadAtWithStats(ctx context.Context, p []byte, off int64, stats *Stats) (n int, err error) {
-	t1 := time.Now()
+	start := time.Now()
 	defer func() {
-		stats.FileBytesPerRead.Sample(uint64(len(p)))
-		stats.FileReadLatency.SampleTimeSince(t1)
+		elapsed := time.Since(start)
+		atomic.AddInt64(&ReadAtDuration, int64(elapsed))
+		atomic.AddUint64(&ReadAtCount, 1)
 	}()
+
 	return fra.f.ReadAt(p, off)
 }

@@ -23,6 +23,7 @@ import (
 	"math"
 	"math/bits"
 	"sync/atomic"
+	"time"
 
 	"github.com/dolthub/gozstd"
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -258,6 +259,11 @@ func (ai archiveReader) has(hash hash.Hash) bool {
 	return ai.search(hash) >= 0
 }
 
+var DecompressDuration int64
+var DecompressCount uint64
+var DecompressDictDuration int64
+var DecompressDictCount uint64
+
 // get returns the decompressed data for the given hash. If the hash is not found, nil is returned (not an error)
 func (ai archiveReader) get(hash hash.Hash) ([]byte, error) {
 	dict, data, err := ai.getRaw(hash)
@@ -267,9 +273,17 @@ func (ai archiveReader) get(hash hash.Hash) ([]byte, error) {
 
 	var result []byte
 	if dict == nil {
+		start := time.Now()
 		result, err = gozstd.Decompress(nil, data)
+		elapsed := time.Since(start)
+		atomic.AddInt64(&DecompressDuration, int64(elapsed))
+		atomic.AddUint64(&DecompressCount, 1)
 	} else {
+		start := time.Now()
 		result, err = gozstd.DecompressDict(nil, data, dict)
+		elapsed := time.Since(start)
+		atomic.AddInt64(&DecompressDictDuration, int64(elapsed))
+		atomic.AddUint64(&DecompressDictCount, 1)
 	}
 	if err != nil {
 		return nil, err
@@ -288,17 +302,23 @@ func (ai archiveReader) close() error {
 	return nil
 }
 
+var ReadAtDuration int64
+var ReadAtCount uint64
+
 func (ai archiveReader) readByteSpan(bs byteSpan) ([]byte, error) {
 	buff := make([]byte, bs.length)
-	_, err := ai.reader.ReadAt(buff[:], int64(bs.offset))
+
+	start := time.Now()
+	_, err := ai.reader.ReadAt(buff, int64(bs.offset))
+	elapsed := time.Since(start)
+	atomic.AddInt64(&ReadAtDuration, int64(elapsed))
+	atomic.AddUint64(&ReadAtCount, 1)
+
 	if err != nil {
 		return nil, err
 	}
 	return buff, nil
 }
-
-var DictionaryCacheHit int64
-var DictionaryCacheMiss int64
 
 // getRaw returns the raw data for the given hash. If the hash is not found, nil is returned for both slices. Also,
 // no error is returned in this case. Errors will only be returned if there is an io error.
@@ -313,7 +333,6 @@ func (ai archiveReader) getRaw(hash hash.Hash) (dict *gozstd.DDict, data []byte,
 	chunkRef := ai.chunkRefs[idx]
 	if chunkRef.dict != 0 {
 		if cached, cacheHit := ai.dictCache.Get(chunkRef.dict); cacheHit {
-			atomic.AddInt64(&DictionaryCacheHit, 1)
 			dict = cached
 		} else {
 			byteSpan := ai.byteSpans[chunkRef.dict]
@@ -332,7 +351,6 @@ func (ai archiveReader) getRaw(hash hash.Hash) (dict *gozstd.DDict, data []byte,
 				return nil, nil, e2
 			}
 
-			atomic.AddInt64(&DictionaryCacheMiss, 1)
 			ai.dictCache.Add(chunkRef.dict, dict)
 		}
 	}
