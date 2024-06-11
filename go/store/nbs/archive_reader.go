@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"io"
 	"math/bits"
+	"sync/atomic"
+	"time"
 
 	"github.com/dolthub/dolt/go/store/hash"
 	"github.com/dolthub/gozstd"
@@ -185,7 +187,7 @@ func loadFooter(reader io.ReaderAt, fileSize uint64) (f footer, err error) {
 	f.metaCheckSum = sha512Sum(buf[afrMetaChkSumOffset : afrMetaChkSumOffset+sha512.Size])
 	f.fileSize = fileSize
 
-	// calculate the hash of the footer. We don't currently verify that this is what was used to load the content.
+	// calculate the has of the footer. We don't currently verify that this is what was used to load the content.
 	sha := sha512.New()
 	sha.Write(buf)
 	f.hash = hash.New(sha.Sum(nil)[:hash.ByteLen])
@@ -245,10 +247,19 @@ func (ai archiveReader) close() error {
 	return nil
 }
 
+var ReadAtDuration int64
+var ReadAtCount uint64
+
 // readByteSpan reads the byte span from the archive. This allocates a new byte slice and returns it to the caller.
 func (ai archiveReader) readByteSpan(bs byteSpan) ([]byte, error) {
 	buff := make([]byte, bs.length)
-	_, err := ai.reader.ReadAt(buff[:], int64(bs.offset))
+
+	start := time.Now()
+	_, err := ai.reader.ReadAt(buff, int64(bs.offset))
+	elapsed := time.Since(start)
+	atomic.AddInt64(&ReadAtDuration, int64(elapsed))
+	atomic.AddUint64(&ReadAtCount, 1)
+
 	if err != nil {
 		return nil, err
 	}

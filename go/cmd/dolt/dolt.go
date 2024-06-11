@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"math/rand"
 	"net/http"
 	_ "net/http/pprof"
@@ -243,7 +244,54 @@ const traceProf = "trace"
 const featureVersionFlag = "--feature-version"
 
 func main() {
-	os.Exit(runMain())
+	status := runMain()
+
+	statFile, err := os.OpenFile("stats.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatalf("Failed to open stats file: %v", err)
+	}
+
+	logger := log.New(statFile, "", log.LstdFlags)
+
+	logger.Printf("--------------------------------------------\n")
+	if nbs.GetManyCount > 0 {
+		logger.Printf("GetMany Total Duration: %v\n", time.Duration(nbs.GetManyDuration))
+		logger.Printf("GetMany Call Count: %v\n", nbs.GetManyCount)
+		logger.Printf("GetMany Average Duration: %v\n", time.Duration(nbs.GetManyDuration/int64(nbs.GetManyCount)))
+	}
+	if nbs.GetCount > 0 {
+		logger.Printf("Get Duration: %v\n", time.Duration(nbs.GetDuration))
+		logger.Printf("Get Call Count: %v\n", nbs.GetCount)
+		logger.Printf("Get Average Duration: %v\n", time.Duration(nbs.GetDuration/int64(nbs.GetCount)))
+	}
+	if nbs.HasManyCount > 0 {
+		logger.Printf("HasMany Duration: %v\n", time.Duration(nbs.HasManyDuration))
+		logger.Printf("HasMany Call Count: %v\n", nbs.HasManyCount)
+		logger.Printf("HasMany Average Duration: %v\n", time.Duration(nbs.HasManyDuration/int64(nbs.HasManyCount)))
+	}
+	if nbs.HasCount > 0 {
+		logger.Printf("Has Duration: %v\n", time.Duration(nbs.HasDuration))
+		logger.Printf("Has Call Count: %v\n", nbs.HasCount)
+		logger.Printf("Has Average Duration: %v\n", time.Duration(nbs.HasDuration/int64(nbs.HasCount)))
+	}
+	if nbs.DecompressCount > 0 {
+		logger.Printf("Decompress Duration: %v\n", time.Duration(nbs.DecompressDuration))
+		logger.Printf("Decompress Call Count: %v\n", nbs.DecompressCount)
+		logger.Printf("Decompress Average Duration: %v\n", time.Duration(nbs.DecompressDuration/int64(nbs.DecompressCount)))
+	}
+	if nbs.DecompressDictCount > 0 {
+		logger.Printf("DecompressDict Duration: %v\n", time.Duration(nbs.DecompressDictDuration))
+		logger.Printf("DecompressDict Call Count: %v\n", nbs.DecompressDictCount)
+		logger.Printf("DecompressDict Average Duration: %v\n", time.Duration(nbs.DecompressDictDuration/int64(nbs.DecompressDictCount)))
+	}
+	if nbs.ReadAtCount > 0 {
+		logger.Printf("ReadAt Duration: %v\n", time.Duration(nbs.ReadAtDuration))
+		logger.Printf("ReadAt Call Count: %v\n", nbs.ReadAtCount)
+		logger.Printf("ReadAt Average Duration: %v\n", time.Duration(nbs.ReadAtDuration/int64(nbs.ReadAtCount)))
+	}
+
+	_ = statFile.Close()
+	os.Exit(status)
 }
 
 func runMain() int {
