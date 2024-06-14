@@ -27,6 +27,7 @@ import (
 	"github.com/dolthub/dolt/go/store/hash"
 	"github.com/dolthub/gozstd"
 	lru "github.com/hashicorp/golang-lru/v2"
+	"golang.org/x/sync/errgroup"
 )
 
 const defaultDictionarySize = 1 << 12 // NM4 - maybe just select the largest chunk. TBD.
@@ -654,18 +655,45 @@ func newSimpleChunkSourceCache(cs chunkSource) (*SimpleChunkSourceCache, error) 
 	return &SimpleChunkSourceCache{lruCache, cs}, nil
 }
 
-func (csc *SimpleChunkSourceCache) get(ctx context.Context, h hash.Hash) (*chunks.Chunk, error) {
-	if chk, ok := csc.cache.Get(h); ok {
-		return chk, nil
+// NM4 - not used currently.
+func (csc *SimpleChunkSourceCache) getMany(ctx context.Context, hs hash.HashSet) ([]*chunks.Chunk, error) {
+	chks := make([]*chunks.Chunk, 0, len(hs))
+	records := make([]getRecord, 0, len(hs))
+	for h := range hs {
+		if chk, ok := csc.cache.Get(h); ok {
+			chks = append(chks, chk)
+		} else {
+			records = append(records, getRecord{&h, h.Prefix(), false})
+		}
 	}
+	group, ctx := errgroup.WithContext(ctx)
+
+	allFound, err := csc.cs.getMany(ctx, group, records, func(ctx context.Context, chk *chunks.Chunk) {
+		csc.cache.Add(chk.Hash(), chk)
+		chks = append(chks, chk)
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	if !allFound {
+		return nil, errors.New("not all chunks found")
+	}
+
+	return chks, nil
+}
+
+// NM4 - drop this and replace with getMany calls.
+func (csc *SimpleChunkSourceCache) get(ctx context.Context, h hash.Hash) (*chunks.Chunk, error) {
+	//	if chk, ok := csc.cache.Get(h); ok {
+	//		return chk, nil
+	//	}
 
 	bytes, err := csc.cs.get(ctx, h, nil)
 	if err != nil {
 		return nil, err
 	}
-
 	chk := chunks.NewChunk(bytes)
-	csc.cache.Add(h, &chk)
+	//	csc.cache.Add(h, &chk)
 	return &chk, nil
 }
 
