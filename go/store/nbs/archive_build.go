@@ -577,6 +577,12 @@ func (cr *ChunkRelations) convertToChunkGroups(ctx context.Context, chks *Simple
 			defer wg.Done()
 			for hs := range groupChannel {
 				progress <- fmt.Sprintf("Worker (%d) taking group of size %d", i, len(hs))
+
+				if len(hs) > 50 {
+					progress <- "Skipping group of size > 50."
+					continue
+				}
+
 				if len(hs) > 1 {
 					chkGrp, err := newChunkGroup(ctx, chks, buff, hs, defaultDict)
 					if err != nil {
