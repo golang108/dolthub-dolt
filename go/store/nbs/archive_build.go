@@ -579,7 +579,7 @@ func (cr *ChunkRelations) convertToChunkGroups(ctx context.Context, chks *Simple
 				if len(hs) > 1 {
 					chkGrp, err := newChunkGroup(ctx, chks, buff, hs, defaultDict)
 					if err != nil {
-						// NM4 - Message error. Currently, won't cause a problem, as chunks will end up ungrouped.
+						progress <- err
 						continue
 					}
 					progress <- ArchiveConvertToChunkGroupsMsg{FinishedOne: true}
