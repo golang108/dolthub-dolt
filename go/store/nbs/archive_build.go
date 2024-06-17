@@ -568,7 +568,7 @@ func (cr *ChunkRelations) convertToChunkGroups(ctx context.Context, chks *Simple
 	resultChannel := make(chan *chunkGroup, len(groups))
 
 	// Start worker goroutines
-	numThreads := 1
+	numThreads := 4
 	var wg sync.WaitGroup
 	wg.Add(numThreads)
 	for i := 0; i < numThreads; i++ {
@@ -683,7 +683,7 @@ type SimpleChunkSourceCache struct {
 }
 
 func newSimpleChunkSourceCache(cs chunkSource) (*SimpleChunkSourceCache, error) {
-	lruCache, err := lru.New2Q[hash.Hash, *chunks.Chunk](30000000) // NM4 - Make much bigger. We'd like to stuff memory as much as possible.
+	lruCache, err := lru.New2Q[hash.Hash, *chunks.Chunk](3000000) // NM4 - This works out to be about 10Gb
 	if err != nil {
 		return nil, err
 	}
