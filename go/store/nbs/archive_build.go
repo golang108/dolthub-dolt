@@ -568,7 +568,7 @@ func (cr *ChunkRelations) convertToChunkGroups(ctx context.Context, chks *Simple
 	resultChannel := make(chan *chunkGroup, len(groups))
 
 	// Start worker goroutines
-	numThreads := 2
+	numThreads := 1
 	var wg sync.WaitGroup
 	wg.Add(numThreads)
 	for i := 0; i < numThreads; i++ {
