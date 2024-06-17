@@ -584,6 +584,8 @@ func (cr *ChunkRelations) convertToChunkGroups(ctx context.Context, chks *Simple
 					}
 					progress <- ArchiveConvertToChunkGroupsMsg{FinishedOne: true}
 					resultChannel <- chkGrp
+				} else {
+					progress <- "Skipping single item group."
 				}
 			}
 		}()
