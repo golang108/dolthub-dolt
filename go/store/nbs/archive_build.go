@@ -578,8 +578,8 @@ func (cr *ChunkRelations) convertToChunkGroups(ctx context.Context, chks *Simple
 			for hs := range groupChannel {
 				progress <- fmt.Sprintf("Worker (%d) taking group of size %d", i, len(hs))
 
-				if len(hs) > 127 {
-					progress <- "Skipping group of size > 127."
+				if len(hs) > 30 {
+					progress <- "Skipping group of size > 30."
 					continue
 				}
 
