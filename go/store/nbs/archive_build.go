@@ -701,16 +701,16 @@ func (csc *SimpleChunkSourceCache) getMany(ctx context.Context, hs hash.HashSet)
 
 // NM4 - drop this and replace with getMany calls.
 func (csc *SimpleChunkSourceCache) get(ctx context.Context, h hash.Hash) (*chunks.Chunk, error) {
-	//	if chk, ok := csc.cache.Get(h); ok {
-	//		return chk, nil
-	//	}
+	if chk, ok := csc.cache.Get(h); ok {
+		return chk, nil
+	}
 
 	bytes, err := csc.cs.get(ctx, h, nil)
 	if err != nil {
 		return nil, err
 	}
 	chk := chunks.NewChunk(bytes)
-	//	csc.cache.Add(h, &chk)
+	csc.cache.Add(h, &chk)
 	return &chk, nil
 }
 
