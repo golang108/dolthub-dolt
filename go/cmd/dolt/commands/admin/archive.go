@@ -134,7 +134,7 @@ func handleProgress(progress chan interface{}) {
 				}
 				switch v := msg.(type) {
 				case string:
-					cli.Println("Archive Progress: %s", v)
+					cli.Printf("Archive Progress: %s\n", v)
 				case nbs.ArchiveConvertToChunkGroupsMsg:
 					if v.GroupCount > 0 {
 						totalGroupCount += v.GroupCount

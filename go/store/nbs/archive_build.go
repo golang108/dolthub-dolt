@@ -573,9 +573,11 @@ func (cr *ChunkRelations) convertToChunkGroups(ctx context.Context, chks *Simple
 	wg.Add(numThreads)
 	for i := 0; i < numThreads; i++ {
 		go func() {
+			progress <- "Starting group converter goroutine."
 			buff := make([]byte, 0, maxChunkSize)
 			defer wg.Done()
 			for hs := range groupChannel {
+				progress <- fmt.Sprintf("Worker (%d) taking group of size %d", i, len(hs))
 				if len(hs) > 1 {
 					chkGrp, err := newChunkGroup(ctx, chks, buff, hs, defaultDict)
 					if err != nil {
