@@ -593,8 +593,13 @@ func (cr *ChunkRelations) convertToChunkGroups(ctx context.Context, chks *Simple
 		}()
 	}
 
+	shuffled := make([]hash.HashSet, len(groups))
+	rand.Shuffle(len(groups), func(i, j int) {
+		shuffled[i] = groups[j]
+	})
+
 	// Send groups to process
-	for _, v := range groups {
+	for _, v := range shuffled {
 		groupChannel <- v
 	}
 	close(groupChannel)
