@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -342,6 +343,7 @@ func runMain() int {
 					cli.Println("mem profiling enabled.")
 				case blockingProf:
 					profileOpts = append(profileOpts, profile.BlockProfile)
+					runtime.SetBlockProfileRate(1)
 					cli.Println("block profiling enabled")
 				case traceProf:
 					profileOpts = append(profileOpts, profile.TraceProfile)
