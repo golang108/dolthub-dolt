@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	"golang.org/x/sync/errgroup"
 
@@ -184,13 +185,18 @@ func (lvs *ValueStore) Format() *NomsBinFormat {
 	return lvs.nbf
 }
 
+var ReadValueCacheHits int64
+var ReadValueCount int64
+
 // ReadValue reads and decodes a value from lvs. It is not considered an error
 // for the requested chunk to be empty; in this case, the function simply
 // returns nil.
 func (lvs *ValueStore) ReadValue(ctx context.Context, h hash.Hash) (Value, error) {
+	atomic.AddInt64(&ReadValueCount, 1)
 	lvs.versOnce.Do(lvs.expectVersion)
 	if v, ok := lvs.decodedChunks.Get(h); ok {
 		d.PanicIfTrue(v == nil)
+		atomic.AddInt64(&ReadValueCacheHits, 1)
 		nv := v.(Value)
 		return nv, nil
 	}

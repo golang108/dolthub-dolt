@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dolthub/dolt/go/store/types"
 	"github.com/dolthub/go-mysql-server/sql"
 	"github.com/fatih/color"
 	"github.com/pkg/profile"
@@ -289,6 +290,10 @@ func main() {
 		logger.Printf("ReadAt Duration: %v\n", time.Duration(nbs.ReadAtDuration))
 		logger.Printf("ReadAt Call Count: %v\n", nbs.ReadAtCount)
 		logger.Printf("ReadAt Average Duration: %v\n", time.Duration(nbs.ReadAtDuration/int64(nbs.ReadAtCount)))
+	}
+	if types.ReadValueCount > 0 {
+		hitPercent := float64(types.ReadValueCacheHits) / float64(types.ReadValueCount)
+		logger.Printf("ReadValueCalls %d (cache hits %d, %.2f%%)\n", types.ReadValueCount, types.ReadValueCacheHits, hitPercent*100)
 	}
 
 	_ = statFile.Close()
