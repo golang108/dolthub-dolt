@@ -311,6 +311,11 @@ func main() {
 		logger.Printf("StartTransaction Call Count: %v\n", dsess.StartTransactionCount)
 		logger.Printf("StartTransaction Average Duration: %v\n", time.Duration(dsess.StartTransactionDuration/int64(dsess.StartTransactionCount)))
 	}
+	if nbs.NewArchiveReaderCount > 0 {
+		logger.Printf("NewArchiveReader Duration: %v\n", time.Duration(nbs.NewArchiveReaderDuration))
+		logger.Printf("NewArchiveReader Call Count: %v\n", nbs.NewArchiveReaderCount)
+		logger.Printf("NewArchiveReader Average Duration: %v\n", time.Duration(nbs.NewArchiveReaderDuration/int64(nbs.NewArchiveReaderCount)))
+	}
 
 	_ = statFile.Close()
 	os.Exit(status)

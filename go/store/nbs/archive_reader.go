@@ -101,7 +101,16 @@ func (f footer) metadataSpan() byteSpan {
 	return byteSpan{offset: f.fileSize - archiveFooterSize - uint64(f.metadataSize), length: uint64(f.metadataSize)}
 }
 
+var NewArchiveReaderDuration int64
+var NewArchiveReaderCount uint64
+
 func newArchiveReader(reader io.ReaderAt, fileSize uint64) (archiveReader, error) {
+	start := time.Now()
+	defer func() {
+		atomic.AddInt64(&NewArchiveReaderDuration, int64(time.Since(start)))
+		atomic.AddUint64(&NewArchiveReaderCount, 1)
+	}()
+
 	footer, err := loadFooter(reader, fileSize)
 	if err != nil {
 		return archiveReader{}, err
