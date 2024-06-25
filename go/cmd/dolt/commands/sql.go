@@ -1038,10 +1038,20 @@ func processQuery(ctx *sql.Context, query string, qryist cli.Queryist) (sql.Sche
 	return processParsedQuery(ctx, query, qryist, sqlStatement)
 }
 
+var SQLProcessParsedQueryDuration int64
+var SQLProcessParsedQueryCount int64
+
 // processParsedQuery processes a single query with the parsed statement provided. The Root of the sqlEngine
 // will be updated if necessary. Returns the schema and the row iterator for the results, which may be nil,
 // and an error if one occurs.
 func processParsedQuery(ctx *sql.Context, query string, qryist cli.Queryist, sqlStatement sqlparser.Statement) (sql.Schema, sql.RowIter, error) {
+	start := time.Now()
+	defer func() {
+		// No race here.
+		SQLProcessParsedQueryDuration += time.Since(start).Nanoseconds()
+		SQLProcessParsedQueryCount++
+	}()
+
 	switch s := sqlStatement.(type) {
 	case *sqlparser.Use:
 		sch, ri, err := qryist.Query(ctx, query)

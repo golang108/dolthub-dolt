@@ -316,6 +316,11 @@ func main() {
 		logger.Printf("NewArchiveReader Call Count: %v\n", nbs.NewArchiveReaderCount)
 		logger.Printf("NewArchiveReader Average Duration: %v\n", time.Duration(nbs.NewArchiveReaderDuration/int64(nbs.NewArchiveReaderCount)))
 	}
+	if commands.SQLProcessParsedQueryDuration > 0 {
+		logger.Printf("SQLProcessParsedQuery Duration: %v\n", time.Duration(commands.SQLProcessParsedQueryDuration))
+		logger.Printf("SQLProcessParsedQuery Call Count: %v\n", commands.SQLProcessParsedQueryCount)
+		logger.Printf("SQLProcessParsedQuery Average Duration: %v\n", time.Duration(commands.SQLProcessParsedQueryDuration/int64(commands.SQLProcessParsedQueryCount)))
+	}
 
 	_ = statFile.Close()
 	os.Exit(status)
