@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/dolthub/go-mysql-server/sql"
@@ -141,8 +142,17 @@ func LoadDoltDBWithParams(ctx context.Context, nbf *types.NomsBinFormat, urlStr 
 	return &DoltDB{db: hooksDatabase{Database: db}, vrw: vrw, ns: ns, databaseName: name}, nil
 }
 
+var NomsRootDuration int64
+var NomsRootCount uint64
+
 // NomsRoot returns the hash of the noms dataset map
 func (ddb *DoltDB) NomsRoot(ctx context.Context) (hash.Hash, error) {
+	start := time.Now()
+	defer func() {
+		atomic.AddInt64(&NomsRootDuration, int64(time.Since(start)))
+		atomic.AddUint64(&NomsRootCount, 1)
+	}()
+
 	return datas.ChunkStoreFromDatabase(ddb.db).Root(ctx)
 }
 

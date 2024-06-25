@@ -301,6 +301,11 @@ func main() {
 		logger.Printf("TCINext Call Count: %v\n", rowexec.TCINextCount)
 		logger.Printf("TCINext Average Duration: %v\n", time.Duration(rowexec.TCINextDuration/int64(rowexec.TCINextCount)))
 	}
+	if doltdb.NomsRootCount > 0 {
+		logger.Printf("NomsRoot Duration: %v\n", time.Duration(doltdb.NomsRootDuration))
+		logger.Printf("NomsRoot Call Count: %v\n", doltdb.NomsRootCount)
+		logger.Printf("NomsRoot Average Duration: %v\n", time.Duration(doltdb.NomsRootDuration/int64(doltdb.NomsRootCount)))
+	}
 
 	_ = statFile.Close()
 	os.Exit(status)
