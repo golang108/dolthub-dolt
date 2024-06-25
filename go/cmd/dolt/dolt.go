@@ -306,6 +306,11 @@ func main() {
 		logger.Printf("NomsRoot Call Count: %v\n", doltdb.NomsRootCount)
 		logger.Printf("NomsRoot Average Duration: %v\n", time.Duration(doltdb.NomsRootDuration/int64(doltdb.NomsRootCount)))
 	}
+	if dsess.StartTransactionCount > 0 {
+		logger.Printf("StartTransaction Duration: %v\n", time.Duration(dsess.StartTransactionDuration))
+		logger.Printf("StartTransaction Call Count: %v\n", dsess.StartTransactionCount)
+		logger.Printf("StartTransaction Average Duration: %v\n", time.Duration(dsess.StartTransactionDuration/int64(dsess.StartTransactionCount)))
+	}
 
 	_ = statFile.Close()
 	os.Exit(status)

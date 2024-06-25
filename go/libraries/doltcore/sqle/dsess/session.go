@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dolthub/go-mysql-server/sql"
@@ -321,8 +322,17 @@ func (d *DoltSession) ValidateSession(ctx *sql.Context) error {
 	return d.validateErr
 }
 
+var StartTransactionDuration int64
+var StartTransactionCount uint64
+
 // StartTransaction refreshes the state of this session and starts a new transaction.
 func (d *DoltSession) StartTransaction(ctx *sql.Context, tCharacteristic sql.TransactionCharacteristic) (sql.Transaction, error) {
+	start := time.Now()
+	defer func() {
+		atomic.AddInt64(&StartTransactionDuration, int64(time.Since(start)))
+		atomic.AddUint64(&StartTransactionCount, 1)
+	}()
+
 	// TODO: this is only necessary to support filter-branch, which needs to set a root directly and not have the
 	//  session state altered when a transaction begins
 	if TransactionsDisabled(ctx) {
