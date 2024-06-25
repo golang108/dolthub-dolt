@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	goerrors "gopkg.in/src-d/go-errors.v1"
@@ -147,8 +148,17 @@ func LoadWithoutDB(ctx context.Context, hdp HomeDirProvider, fs filesys.Filesys,
 	}
 }
 
+var DoltEnvLoadDuration int64
+var DoltEnvLoadCount uint64
+
 // Load loads the DoltEnv for the .dolt directory determined by resolving the specified urlStr with the specified Filesys.
 func Load(ctx context.Context, hdp HomeDirProvider, fs filesys.Filesys, urlStr string, version string) *DoltEnv {
+	start := time.Now()
+	defer func() {
+		atomic.AddInt64(&DoltEnvLoadDuration, int64(time.Since(start)))
+		atomic.AddUint64(&DoltEnvLoadCount, 1)
+	}()
+
 	dEnv := LoadWithoutDB(ctx, hdp, fs, version)
 
 	ddb, dbLoadErr := doltdb.LoadDoltDB(ctx, types.Format_Default, urlStr, fs)

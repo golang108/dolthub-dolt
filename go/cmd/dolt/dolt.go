@@ -257,6 +257,12 @@ func main() {
 	logger := log.New(statFile, "", log.LstdFlags)
 
 	logger.Printf("--------------------------------------------\n")
+	if env.DoltEnvLoadCount > 0 {
+		logger.Printf("DoltEnvLoad Duration: %v\n", time.Duration(env.DoltEnvLoadDuration))
+		logger.Printf("DoltEnvLoad Call Count: %v\n", env.DoltEnvLoadCount)
+		logger.Printf("DoltEnvLoad Average Duration: %v\n", time.Duration(env.DoltEnvLoadDuration/int64(env.DoltEnvLoadCount)))
+	}
+
 	if nbs.GetManyCount > 0 {
 		logger.Printf("GetMany Total Duration: %v\n", time.Duration(nbs.GetManyDuration))
 		logger.Printf("GetMany Call Count: %v\n", nbs.GetManyCount)
