@@ -34,7 +34,6 @@ import (
 
 	"github.com/dolthub/dolt/go/store/types"
 	"github.com/dolthub/go-mysql-server/sql"
-	"github.com/dolthub/go-mysql-server/sql/rowexec"
 	"github.com/fatih/color"
 	"github.com/pkg/profile"
 	"github.com/tidwall/gjson"
@@ -283,16 +282,6 @@ func main() {
 		logger.Printf("Has Call Count: %v\n", nbs.HasCount)
 		logger.Printf("Has Average Duration: %v\n", time.Duration(nbs.HasDuration/int64(nbs.HasCount)))
 	}
-	if nbs.DecompressCount > 0 {
-		logger.Printf("Decompress Duration: %v\n", time.Duration(nbs.DecompressDuration))
-		logger.Printf("Decompress Call Count: %v\n", nbs.DecompressCount)
-		logger.Printf("Decompress Average Duration: %v\n", time.Duration(nbs.DecompressDuration/int64(nbs.DecompressCount)))
-	}
-	if nbs.DecompressDictCount > 0 {
-		logger.Printf("DecompressDict Duration: %v\n", time.Duration(nbs.DecompressDictDuration))
-		logger.Printf("DecompressDict Call Count: %v\n", nbs.DecompressDictCount)
-		logger.Printf("DecompressDict Average Duration: %v\n", time.Duration(nbs.DecompressDictDuration/int64(nbs.DecompressDictCount)))
-	}
 	if nbs.ReadAtCount > 0 {
 		logger.Printf("ReadAt Duration: %v\n", time.Duration(nbs.ReadAtDuration))
 		logger.Printf("ReadAt Call Count: %v\n", nbs.ReadAtCount)
@@ -301,11 +290,6 @@ func main() {
 	if types.ReadValueCount > 0 {
 		hitPercent := float64(types.ReadValueCacheHits) / float64(types.ReadValueCount)
 		logger.Printf("ReadValueCalls %d (cache hits %d, %.2f%%)\n", types.ReadValueCount, types.ReadValueCacheHits, hitPercent*100)
-	}
-	if rowexec.TCINextCount > 0 {
-		logger.Printf("TCINext Duration: %v\n", time.Duration(rowexec.TCINextDuration))
-		logger.Printf("TCINext Call Count: %v\n", rowexec.TCINextCount)
-		logger.Printf("TCINext Average Duration: %v\n", time.Duration(rowexec.TCINextDuration/int64(rowexec.TCINextCount)))
 	}
 	if doltdb.NomsRootCount > 0 {
 		logger.Printf("NomsRoot Duration: %v\n", time.Duration(doltdb.NomsRootDuration))
