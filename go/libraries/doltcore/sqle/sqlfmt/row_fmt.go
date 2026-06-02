@@ -366,7 +366,9 @@ func interfaceValueAsSqlString(ctx *sql.Context, ti typeinfo.TypeInfo, value int
 			return "", err
 		}
 		if !ok {
-			return "", fmt.Errorf("expected string, got %T", value)
+			// For extended types (e.g., Postgres JSONB), the value may not be a plain string.
+			// Fall back to the pre-computed string representation from SqlColToStr.
+			return quoteAndEscapeString(str), nil
 		}
 		return quoteAndEscapeString(value), nil
 	case querypb.Type_JSON, querypb.Type_ENUM, querypb.Type_SET, querypb.Type_BLOB:
